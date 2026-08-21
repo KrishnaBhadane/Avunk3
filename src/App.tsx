@@ -29,6 +29,7 @@ import { TPInternshipMonitor } from './pages/tp/InternshipMonitor';
 
 // Company Pages
 import { CompanyDashboard } from './pages/company/Dashboard';
+import { CompanyApplicants } from './pages/company/Applicants';
 import { CompanyInternTracker } from './pages/company/InternTracker';
 import { CompanyRequirements } from './pages/company/Requirements';
 import { CompanyFindStudents } from './pages/company/FindStudents';
@@ -187,6 +188,14 @@ const AppRoutes: React.FC = () => {
           element={
             <ProtectedRoute allowedRole="company">
               <CompanyDashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/company/applicants"
+          element={
+            <ProtectedRoute allowedRole="company">
+              <CompanyApplicants />
             </ProtectedRoute>
           }
         />

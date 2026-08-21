@@ -8,7 +8,6 @@ import {
   User,
   Users,
   Briefcase,
-  Search,
   Clock,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
@@ -35,9 +34,9 @@ export const MobileNav: React.FC = () => {
 
   const companyLinks = [
     { to: '/company', label: 'Home', icon: LayoutDashboard },
+    { to: '/company/applicants', label: 'Applicants', icon: Users },
     { to: '/company/intern-tracker', label: 'Interns', icon: Clock },
     { to: '/company/requirements', label: 'Postings', icon: Briefcase },
-    { to: '/company/find-students', label: 'Candidates', icon: Search },
     { to: '/company/profile', label: 'Profile', icon: User },
   ];
 

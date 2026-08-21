@@ -492,11 +492,14 @@ export interface CompanyApplicantItem {
   status: string;
   applied_at: string;
   student_name: string;
+  student_email?: string;
+  student_phone?: string;
   student_institute: string;
   student_department?: string;
   student_graduation_year?: number;
   student_skills: string[];
   requirement_title?: string;
+  resume_url?: string;
 }
 
 /**
@@ -520,11 +523,26 @@ export async function fetchCompanyApplications(
     // Fetch student info
     const { data: students } = await supabase
       .from('student_profiles')
-      .select('id, full_name, institute_name, department, graduation_year, skills')
+      .select('id, profile_id, full_name, institute_name, department, graduation_year, phone, skills')
       .in('id', studentIds);
 
     const studentMap = new Map<string, any>();
-    (students || []).forEach((s: any) => studentMap.set(s.id, s));
+    const profileIds: string[] = [];
+    (students || []).forEach((s: any) => {
+      studentMap.set(s.id, s);
+      if (s.profile_id) profileIds.push(s.profile_id);
+    });
+
+    // Fetch emails from profiles
+    const emailMap = new Map<string, string>();
+    if (profileIds.length > 0) {
+      const { data: profiles } = await supabase
+        .from('profiles')
+        .select('id, email')
+        .in('id', profileIds);
+
+      (profiles || []).forEach((p: any) => emailMap.set(p.id, p.email));
+    }
 
     // Fetch requirement titles
     let reqMap = new Map<string, string>();
@@ -539,6 +557,8 @@ export async function fetchCompanyApplications(
 
     return apps.map((app: any) => {
       const student = studentMap.get(app.student_id);
+      const studentEmail = student?.profile_id ? emailMap.get(student.profile_id) : undefined;
+
       return {
         id: app.id,
         student_id: app.student_id,
@@ -547,6 +567,8 @@ export async function fetchCompanyApplications(
         status: app.status || 'applied',
         applied_at: app.applied_at || app.created_at || new Date().toISOString(),
         student_name: student?.full_name || 'Applicant Candidate',
+        student_email: studentEmail,
+        student_phone: student?.phone,
         student_institute: student?.institute_name || 'Partner Institute',
         student_department: student?.department,
         student_graduation_year: student?.graduation_year,
@@ -577,6 +599,39 @@ export async function updateApplicationStatus(
     return { success: true };
   } catch (err: any) {
     return { success: false, error: err.message || 'Failed to update status' };
+  }
+}
+
+/**
+ * Accept an application and directly activate them as an intern in student_internships
+ */
+export async function acceptApplicationAsIntern(
+  app: CompanyApplicantItem,
+  companyName: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    // 1. Mark application as 'accepted'
+    await updateApplicationStatus(app.id, 'accepted');
+
+    // 2. Create active internship record in student_internships
+    const { error } = await supabase.from('student_internships').insert({
+      student_id: app.student_id,
+      company_id: app.company_id,
+      company_name: companyName,
+      role: app.requirement_title || 'Intern',
+      start_date: new Date().toISOString().split('T')[0],
+      end_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+      total_days: 30,
+      status: 'active', // Immediately verified and active
+    });
+
+    if (error) {
+      console.warn('Note on internship creation:', error.message);
+    }
+
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to accept applicant' };
   }
 }
 

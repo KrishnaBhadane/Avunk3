@@ -24,6 +24,7 @@ import {
 export const CompanyDashboard: React.FC = () => {
   const { companyProfile } = useAuth();
   const [requirementCount, setRequirementCount] = useState(0);
+  const [applicantCount, setApplicantCount] = useState(0);
   const [discoverableStudentCount, setDiscoverableStudentCount] = useState(0);
   const [topCandidates, setTopCandidates] = useState<StudentProfile[]>([]);
   const [domainAudit, setDomainAudit] = useState<DomainVerificationResult | null>(null);
@@ -68,6 +69,14 @@ export const CompanyDashboard: React.FC = () => {
         .eq('is_active', true);
 
       setRequirementCount(reqCount || 0);
+
+      // Count job applications received
+      const { count: appCount } = await supabase
+        .from('internship_applications')
+        .select('id', { count: 'exact', head: true })
+        .eq('company_id', companyProfile.id);
+
+      setApplicantCount(appCount || 0);
 
       // Count discoverable students
       const { count: stuCount, data: studentSample } = await supabase
@@ -196,7 +205,20 @@ export const CompanyDashboard: React.FC = () => {
       </div>
 
       {/* Metrics Row */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <Card className="flex flex-col justify-between p-6">
+          <div className="flex justify-between items-start">
+            <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">Applications Received</span>
+            <Users className="w-4 h-4 text-indigo-400" />
+          </div>
+          <div className="mt-4 flex items-baseline justify-between">
+            <span className="text-3xl font-extrabold text-white">{applicantCount}</span>
+            <Link to="/company/applicants" className="text-xs text-indigo-400 font-semibold hover:underline flex items-center gap-1">
+              View Applicants <ArrowRight className="w-3 h-3" />
+            </Link>
+          </div>
+        </Card>
+
         <Card className="flex flex-col justify-between p-6">
           <div className="flex justify-between items-start">
             <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">Available Candidates</span>
@@ -223,15 +245,15 @@ export const CompanyDashboard: React.FC = () => {
 
         <Card className="flex flex-col justify-between p-6">
           <div className="flex justify-between items-start">
-            <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">Corporate Domain Status</span>
+            <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">Corporate Domain</span>
             <Globe className="w-4 h-4 text-slate-400" />
           </div>
           <div className="mt-4 flex items-baseline justify-between">
-            <span className="text-base font-bold text-white truncate max-w-[150px]">
+            <span className="text-base font-bold text-white truncate max-w-[120px]">
               {companyDomain || 'Not Set'}
             </span>
             <Badge variant={isVerified ? 'success' : 'warning'}>
-              {isVerified ? 'Active Web Footprint' : 'Pending Domain'}
+              {isVerified ? 'Verified' : 'Pending'}
             </Badge>
           </div>
         </Card>

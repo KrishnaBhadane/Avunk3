@@ -53,6 +53,7 @@ export const Sidebar: React.FC = () => {
 
   const companyLinks: NavItem[] = [
     { to: '/company', label: 'Dashboard', icon: LayoutDashboard },
+    { to: '/company/applicants', label: 'Job Applicants', icon: Users },
     { to: '/company/intern-tracker', label: 'Intern Tracker', icon: Clock },
     { to: '/company/requirements', label: 'Requirements', icon: Briefcase },
     { to: '/company/find-students', label: 'Find Candidates', icon: Search },
