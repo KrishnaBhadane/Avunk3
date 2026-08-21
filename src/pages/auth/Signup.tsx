@@ -6,6 +6,8 @@ import { Button } from '../../components/common/Button';
 import { Card } from '../../components/common/Card';
 import { GraduationCap, Building2, UserCheck, Check, AlertCircle, Mail } from 'lucide-react';
 
+import { extractDomain } from '../../lib/domainVerifier';
+
 export const Signup: React.FC = () => {
   const [step, setStep] = useState<1 | 2>(1);
   const [role, setRole] = useState<UserRole>('student');
@@ -92,6 +94,22 @@ export const Signup: React.FC = () => {
         setLoading(false);
         return;
       }
+      if (!website.trim()) {
+        setError('Official company website URL or domain is strictly required to verify employer authenticity.');
+        setLoading(false);
+        return;
+      }
+
+      const emailDomain = extractDomain(email);
+      const webDomain = extractDomain(website);
+      const freeWebmails = ['gmail.com', 'yahoo.com', 'outlook.com', 'hotmail.com', 'icloud.com', 'rediffmail.com'];
+
+      if (freeWebmails.includes(emailDomain) && (!webDomain || freeWebmails.includes(webDomain))) {
+        setError('Official business domain required (e.g. https://yourcompany.com). Generic webmail (@gmail/@yahoo) is restricted for company accounts to prevent fake employer profiles.');
+        setLoading(false);
+        return;
+      }
+
       profileData = {
         companyName,
         industry,

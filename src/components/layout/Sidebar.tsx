@@ -10,7 +10,8 @@ import {
   Briefcase,
   Search,
   Sparkles,
-  LogOut
+  LogOut,
+  Building2,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useCredits } from '../../context/CreditContext';
@@ -32,6 +33,7 @@ export const Sidebar: React.FC = () => {
 
   const studentLinks: NavItem[] = [
     { to: '/student', label: 'Dashboard', icon: LayoutDashboard },
+    { to: '/student/apply', label: 'Apply to Jobs', icon: Building2 },
     { to: '/student/offer-check', label: 'Offer Check', icon: FileCheck },
     { to: '/student/resume', label: 'Resume', icon: FileText },
     { to: '/student/insights', label: 'Insights', icon: TrendingUp },

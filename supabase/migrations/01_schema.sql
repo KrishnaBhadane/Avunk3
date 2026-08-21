@@ -223,6 +223,25 @@ create index if not exists idx_student_company_matches_student_id on student_com
 create index if not exists idx_student_company_matches_company_id on student_company_matches(company_id);
 
 -- ============================================================
+-- 12. INTERNSHIP APPLICATIONS
+-- ============================================================
+create table if not exists internship_applications (
+  id uuid primary key default gen_random_uuid(),
+  student_id uuid references student_profiles(id) on delete cascade not null,
+  company_id uuid references company_profiles(id) on delete cascade not null,
+  requirement_id uuid references internship_requirements(id) on delete cascade,
+  status text default 'applied' check (status in ('applied', 'under_review', 'shortlisted', 'rejected')),
+  applied_at timestamptz default now()
+);
+
+create index if not exists idx_internship_applications_student_id on internship_applications(student_id);
+create index if not exists idx_internship_applications_company_id on internship_applications(company_id);
+
+alter table internship_applications enable row level security;
+
+drop policy if exists "internship_applications_all" on internship_applications;
+create policy "internship_applications_all" on internship_applications
+  for all using (auth.role() = 'authenticated');
 -- 12. CREDITS (one row per user)
 -- ============================================================
 create table if not exists credits (

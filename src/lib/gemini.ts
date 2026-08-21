@@ -12,17 +12,22 @@ import type { OfferAnalysisResult, ResumeAnalysisResult, TenPointAuditItem } fro
 
 export type { OfferAnalysisResult, ResumeAnalysisResult, TenPointAuditItem };
 
-const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.GEMINI_API_KEY || '';
+const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.GEMINI_API_KEY || (typeof window !== 'undefined' ? (window as any).__GEMINI_KEY__ : '') || '';
 
 // Initialize Google Generative AI client
-const genAI = GEMINI_API_KEY ? new GoogleGenerativeAI(GEMINI_API_KEY) : null;
+let genAI = GEMINI_API_KEY ? new GoogleGenerativeAI(GEMINI_API_KEY) : null;
 
 /**
  * Helper to call Gemini AI with model fallback
  */
 async function callGemini(prompt: string): Promise<string> {
-  if (!genAI || !GEMINI_API_KEY) {
-    throw new Error('Gemini API key is not configured. Please check your environment variables.');
+  const activeKey = import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.GEMINI_API_KEY || (typeof window !== 'undefined' ? (window as any).__GEMINI_KEY__ : '') || '';
+  if (!activeKey) {
+    throw new Error('Gemini API key is missing. Please set VITE_GEMINI_API_KEY in your environment variables or Vercel settings.');
+  }
+
+  if (!genAI) {
+    genAI = new GoogleGenerativeAI(activeKey);
   }
 
   const models = ['gemini-3.6-flash', 'gemini-3.7-flash'];

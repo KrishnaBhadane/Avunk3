@@ -16,6 +16,7 @@ import { StudentResume } from './pages/student/Resume';
 import { StudentInsights } from './pages/student/Insights';
 import { StudentProfileView } from './pages/student/Profile';
 import { StudentPlus } from './pages/student/Plus';
+import { StudentApply } from './pages/student/Apply';
 
 // T&P Pages
 import { TPDashboard } from './pages/tp/Dashboard';
@@ -67,6 +68,14 @@ const AppRoutes: React.FC = () => {
           element={
             <ProtectedRoute allowedRole="student">
               <StudentDashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/student/apply"
+          element={
+            <ProtectedRoute allowedRole="student">
+              <StudentApply />
             </ProtectedRoute>
           }
         />
