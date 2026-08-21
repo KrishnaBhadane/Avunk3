@@ -242,7 +242,106 @@ alter table internship_applications enable row level security;
 drop policy if exists "internship_applications_all" on internship_applications;
 create policy "internship_applications_all" on internship_applications
   for all using (auth.role() = 'authenticated');
--- 12. CREDITS (one row per user)
+
+-- ============================================================
+-- 13. STUDENT INTERNSHIPS (Active/Completed Tracked Work)
+-- ============================================================
+create table if not exists student_internships (
+  id uuid primary key default gen_random_uuid(),
+  student_id uuid references student_profiles(id) on delete cascade not null,
+  company_id uuid references company_profiles(id) on delete set null,
+  company_name text not null,
+  role text not null,
+  start_date date not null default current_date,
+  end_date date not null default (current_date + interval '30 days'),
+  total_days integer not null default 30,
+  status text not null default 'active' check (status in ('active', 'completed', 'paused')),
+  mentor_name text,
+  mentor_email text,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+create index if not exists idx_student_internships_student_id on student_internships(student_id);
+create index if not exists idx_student_internships_company_id on student_internships(company_id);
+alter table student_internships enable row level security;
+
+drop policy if exists "student_internships_all" on student_internships;
+create policy "student_internships_all" on student_internships
+  for all using (auth.role() = 'authenticated');
+
+-- ============================================================
+-- 14. INTERNSHIP DAILY WORK LOGS
+-- ============================================================
+create table if not exists internship_daily_logs (
+  id uuid primary key default gen_random_uuid(),
+  internship_id uuid references student_internships(id) on delete cascade not null,
+  student_id uuid references student_profiles(id) on delete cascade not null,
+  log_date date not null default current_date,
+  title text not null,
+  description text not null,
+  tasks_completed text,
+  learnings text,
+  blockers text,
+  hours_worked numeric(4, 2) not null default 4.0,
+  status text not null default 'pending' check (status in ('pending', 'approved', 'changes_requested', 'rejected')),
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+create index if not exists idx_internship_daily_logs_internship_id on internship_daily_logs(internship_id);
+create index if not exists idx_internship_daily_logs_student_id on internship_daily_logs(student_id);
+alter table internship_daily_logs enable row level security;
+
+drop policy if exists "internship_daily_logs_all" on internship_daily_logs;
+create policy "internship_daily_logs_all" on internship_daily_logs
+  for all using (auth.role() = 'authenticated');
+
+-- ============================================================
+-- 15. INTERNSHIP LOG EVIDENCE
+-- ============================================================
+create table if not exists internship_log_evidence (
+  id uuid primary key default gen_random_uuid(),
+  daily_log_id uuid references internship_daily_logs(id) on delete cascade not null,
+  evidence_type text not null check (evidence_type in ('file', 'github', 'demo', 'link')),
+  title text,
+  file_path text,
+  file_url text,
+  file_name text,
+  file_type text,
+  url text,
+  created_at timestamptz default now()
+);
+
+create index if not exists idx_internship_log_evidence_daily_log_id on internship_log_evidence(daily_log_id);
+alter table internship_log_evidence enable row level security;
+
+drop policy if exists "internship_log_evidence_all" on internship_log_evidence;
+create policy "internship_log_evidence_all" on internship_log_evidence
+  for all using (auth.role() = 'authenticated');
+
+-- ============================================================
+-- 16. INTERNSHIP MENTOR REVIEWS
+-- ============================================================
+create table if not exists internship_mentor_reviews (
+  id uuid primary key default gen_random_uuid(),
+  daily_log_id uuid references internship_daily_logs(id) on delete cascade not null,
+  reviewer_id uuid references profiles(id) on delete set null,
+  reviewer_name text,
+  decision text not null check (decision in ('approved', 'changes_requested', 'rejected')),
+  comment text not null,
+  created_at timestamptz default now()
+);
+
+create index if not exists idx_internship_mentor_reviews_daily_log_id on internship_mentor_reviews(daily_log_id);
+alter table internship_mentor_reviews enable row level security;
+
+drop policy if exists "internship_mentor_reviews_all" on internship_mentor_reviews;
+create policy "internship_mentor_reviews_all" on internship_mentor_reviews
+  for all using (auth.role() = 'authenticated');
+
+-- ============================================================
+-- 17. CREDITS (one row per user)
 -- ============================================================
 create table if not exists credits (
   id uuid primary key default gen_random_uuid(),

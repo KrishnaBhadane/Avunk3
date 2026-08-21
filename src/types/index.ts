@@ -187,3 +187,82 @@ export interface CreditTransaction {
   reference?: string;
   created_at: string;
 }
+
+// ============================================================
+// INTERNSHIP TRACKER & WORK LOG TYPES
+// ============================================================
+export type InternshipStatus = 'active' | 'completed' | 'paused';
+export type DailyLogStatus = 'pending' | 'approved' | 'changes_requested' | 'rejected';
+export type EvidenceType = 'file' | 'github' | 'demo' | 'link';
+
+export interface StudentInternship {
+  id: string;
+  student_id: string;
+  company_id?: string;
+  company_name: string;
+  role: string;
+  start_date: string;
+  end_date: string;
+  total_days: number;
+  status: InternshipStatus;
+  mentor_name?: string;
+  mentor_email?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface InternshipLogEvidence {
+  id: string;
+  daily_log_id: string;
+  evidence_type: EvidenceType;
+  title?: string;
+  file_path?: string;
+  file_url?: string;
+  file_name?: string;
+  file_type?: string;
+  url?: string;
+  created_at: string;
+}
+
+export interface InternshipMentorReview {
+  id: string;
+  daily_log_id: string;
+  reviewer_id?: string;
+  reviewer_name?: string;
+  decision: 'approved' | 'changes_requested' | 'rejected';
+  comment: string;
+  created_at: string;
+}
+
+export interface InternshipDailyLog {
+  id: string;
+  internship_id: string;
+  student_id: string;
+  log_date: string;
+  title: string;
+  description: string;
+  tasks_completed?: string;
+  learnings?: string;
+  blockers?: string;
+  hours_worked: number;
+  status: DailyLogStatus;
+  evidence?: InternshipLogEvidence[];
+  mentor_reviews?: InternshipMentorReview[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface InternshipProgressStats {
+  total_days: number;
+  days_completed: number;
+  days_remaining: number;
+  total_logs: number;
+  approved_logs: number;
+  pending_logs: number;
+  changes_requested_logs: number;
+  rejected_logs: number;
+  total_hours_worked: number;
+  evidence_submitted_count: number;
+  activity_consistency_percent: number;
+}
+

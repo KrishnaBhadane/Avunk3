@@ -17,6 +17,7 @@ import { StudentInsights } from './pages/student/Insights';
 import { StudentProfileView } from './pages/student/Profile';
 import { StudentPlus } from './pages/student/Plus';
 import { StudentApply } from './pages/student/Apply';
+import { StudentTracker } from './pages/student/Tracker';
 
 // T&P Pages
 import { TPDashboard } from './pages/tp/Dashboard';
@@ -27,6 +28,7 @@ import { TPProfileView } from './pages/tp/Profile';
 
 // Company Pages
 import { CompanyDashboard } from './pages/company/Dashboard';
+import { CompanyInternTracker } from './pages/company/InternTracker';
 import { CompanyRequirements } from './pages/company/Requirements';
 import { CompanyFindStudents } from './pages/company/FindStudents';
 import { CompanyProfileView } from './pages/company/Profile';
@@ -68,6 +70,14 @@ const AppRoutes: React.FC = () => {
           element={
             <ProtectedRoute allowedRole="student">
               <StudentDashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/student/tracker"
+          element={
+            <ProtectedRoute allowedRole="student">
+              <StudentTracker />
             </ProtectedRoute>
           }
         />
@@ -168,6 +178,14 @@ const AppRoutes: React.FC = () => {
           element={
             <ProtectedRoute allowedRole="company">
               <CompanyDashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/company/intern-tracker"
+          element={
+            <ProtectedRoute allowedRole="company">
+              <CompanyInternTracker />
             </ProtectedRoute>
           }
         />

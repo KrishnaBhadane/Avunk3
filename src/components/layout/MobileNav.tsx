@@ -8,7 +8,8 @@ import {
   User,
   Users,
   Briefcase,
-  Search
+  Search,
+  Clock,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
@@ -18,9 +19,9 @@ export const MobileNav: React.FC = () => {
 
   const studentLinks = [
     { to: '/student', label: 'Home', icon: LayoutDashboard },
+    { to: '/student/tracker', label: 'Tracker', icon: Clock },
     { to: '/student/offer-check', label: 'Verify', icon: FileCheck },
     { to: '/student/resume', label: 'Resume', icon: FileText },
-    { to: '/student/insights', label: 'Insights', icon: TrendingUp },
     { to: '/student/profile', label: 'Profile', icon: User },
   ];
 
@@ -33,6 +34,7 @@ export const MobileNav: React.FC = () => {
 
   const companyLinks = [
     { to: '/company', label: 'Home', icon: LayoutDashboard },
+    { to: '/company/intern-tracker', label: 'Interns', icon: Clock },
     { to: '/company/requirements', label: 'Postings', icon: Briefcase },
     { to: '/company/find-students', label: 'Candidates', icon: Search },
     { to: '/company/profile', label: 'Profile', icon: User },

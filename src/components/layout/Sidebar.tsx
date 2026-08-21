@@ -12,6 +12,7 @@ import {
   Sparkles,
   LogOut,
   Building2,
+  Clock,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useCredits } from '../../context/CreditContext';
@@ -33,6 +34,7 @@ export const Sidebar: React.FC = () => {
 
   const studentLinks: NavItem[] = [
     { to: '/student', label: 'Dashboard', icon: LayoutDashboard },
+    { to: '/student/tracker', label: 'Internship Tracker', icon: Clock },
     { to: '/student/apply', label: 'Apply to Jobs', icon: Building2 },
     { to: '/student/offer-check', label: 'Offer Check', icon: FileCheck },
     { to: '/student/resume', label: 'Resume', icon: FileText },
@@ -50,6 +52,7 @@ export const Sidebar: React.FC = () => {
 
   const companyLinks: NavItem[] = [
     { to: '/company', label: 'Dashboard', icon: LayoutDashboard },
+    { to: '/company/intern-tracker', label: 'Intern Tracker', icon: Clock },
     { to: '/company/requirements', label: 'Requirements', icon: Briefcase },
     { to: '/company/find-students', label: 'Find Candidates', icon: Search },
     { to: '/company/profile', label: 'Profile', icon: User },
