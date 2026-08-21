@@ -7,7 +7,9 @@ import {
   submitDailyWorkLog,
   uploadEvidenceFile,
   calculateProgressStats,
+  fetchRegisteredCompanies,
 } from '../../lib/internshipTracker';
+import type { RegisteredCompany } from '../../lib/internshipTracker';
 import type {
   StudentInternship,
   InternshipDailyLog,
@@ -38,6 +40,8 @@ import {
   Check,
   X,
   FileCheck,
+  ShieldAlert,
+  Search,
 } from 'lucide-react';
 
 export const StudentTracker: React.FC = () => {
@@ -49,6 +53,10 @@ export const StudentTracker: React.FC = () => {
   const [stats, setStats] = useState<InternshipProgressStats | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Registered Companies for dropdown
+  const [registeredCompanies, setRegisteredCompanies] = useState<RegisteredCompany[]>([]);
+  const [companySearchTerm, setCompanySearchTerm] = useState('');
+
   // Modals
   const [showAddInternshipModal, setShowAddInternshipModal] = useState(false);
   const [showAddLogModal, setShowAddLogModal] = useState(false);
@@ -56,7 +64,8 @@ export const StudentTracker: React.FC = () => {
   const [editingLog, setEditingLog] = useState<InternshipDailyLog | null>(null);
 
   // Add Internship Form State
-  const [newCompany, setNewCompany] = useState('');
+  const [selectedCompanyId, setSelectedCompanyId] = useState('');
+  const [selectedCompanyName, setSelectedCompanyName] = useState('');
   const [newRole, setNewRole] = useState('');
   const [newStartDate, setNewStartDate] = useState(new Date().toISOString().split('T')[0]);
   const [newEndDate, setNewEndDate] = useState(
@@ -96,14 +105,21 @@ export const StudentTracker: React.FC = () => {
     setInternships(list);
 
     if (list.length > 0) {
-      // Set active internship (or first one)
-      const active = list.find((i) => i.status === 'active') || list[0];
+      // Prioritize active internship, then pending_verification, then first
+      const active = list.find((i) => i.status === 'active')
+        || list.find((i) => i.status === 'pending_verification')
+        || list[0];
       setActiveInternship(active);
 
-      // Fetch daily logs
-      const logs = await fetchInternshipDailyLogs(active.id);
-      setDailyLogs(logs);
-      setStats(calculateProgressStats(active, logs));
+      // Only fetch daily logs if internship is verified (active/completed/paused)
+      if (active.status !== 'pending_verification') {
+        const logs = await fetchInternshipDailyLogs(active.id);
+        setDailyLogs(logs);
+        setStats(calculateProgressStats(active, logs));
+      } else {
+        setDailyLogs([]);
+        setStats(null);
+      }
     } else {
       setActiveInternship(null);
       setDailyLogs([]);
@@ -117,12 +133,37 @@ export const StudentTracker: React.FC = () => {
     loadData();
   }, [loadData]);
 
+  // Load registered companies when modal opens
+  const handleOpenAddInternshipModal = async () => {
+    setFormError('');
+    setShowAddInternshipModal(true);
+    setSelectedCompanyId('');
+    setSelectedCompanyName('');
+    setCompanySearchTerm('');
+    setNewRole('');
+    setNewStartDate(new Date().toISOString().split('T')[0]);
+    setNewEndDate(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]);
+    setNewTotalDays(30);
+    setNewMentorName('');
+    setNewMentorEmail('');
+
+    if (registeredCompanies.length === 0) {
+      const companies = await fetchRegisteredCompanies();
+      setRegisteredCompanies(companies);
+    }
+  };
+
   // Handle creating a new internship track
   const handleCreateInternship = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!studentProfile) return;
-    if (!newCompany.trim() || !newRole.trim()) {
-      setFormError('Company name and internship role are required');
+
+    if (!selectedCompanyId || !selectedCompanyName) {
+      setFormError('You must select a company registered on AVUNK. The company must have an active account.');
+      return;
+    }
+    if (!newRole.trim()) {
+      setFormError('Internship role is required.');
       return;
     }
 
@@ -130,11 +171,12 @@ export const StudentTracker: React.FC = () => {
     setFormError('');
 
     const res = await createStudentInternship(studentProfile.id, {
-      company_name: newCompany.trim(),
+      company_name: selectedCompanyName,
       role: newRole.trim(),
       start_date: newStartDate,
       end_date: newEndDate,
       total_days: Number(newTotalDays) || 30,
+      company_id: selectedCompanyId,
       mentor_name: newMentorName.trim() || undefined,
       mentor_email: newMentorEmail.trim() || undefined,
     });
@@ -147,10 +189,8 @@ export const StudentTracker: React.FC = () => {
 
     setShowAddInternshipModal(false);
     setSubmittingInternship(false);
-    setNewCompany('');
-    setNewRole('');
-    setSuccessNotice('Internship track activated! You can now start logging daily progress.');
-    setTimeout(() => setSuccessNotice(''), 5000);
+    setSuccessNotice('Internship request sent to company for verification. Tracker will activate once the company confirms your internship.');
+    setTimeout(() => setSuccessNotice(''), 8000);
 
     await loadData();
   };
@@ -298,6 +338,11 @@ export const StudentTracker: React.FC = () => {
     }
   };
 
+  // Filter companies for search
+  const filteredCompanies = registeredCompanies.filter((c) =>
+    c.company_name.toLowerCase().includes(companySearchTerm.toLowerCase())
+  );
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -305,6 +350,9 @@ export const StudentTracker: React.FC = () => {
       </div>
     );
   }
+
+  // Check if internship is pending verification — block the tracker
+  const isPendingVerification = activeInternship?.status === 'pending_verification';
 
   return (
     <div className="space-y-8 antialiased">
@@ -320,7 +368,7 @@ export const StudentTracker: React.FC = () => {
           </p>
         </div>
 
-        {activeInternship && (
+        {activeInternship && !isPendingVerification && (
           <div className="flex items-center gap-3">
             <Button
               variant="primary"
@@ -341,8 +389,47 @@ export const StudentTracker: React.FC = () => {
         </div>
       )}
 
+      {/* PENDING VERIFICATION BLOCKER */}
+      {isPendingVerification && activeInternship && (
+        <Card className="p-8 text-center border-amber-800/60 bg-amber-950/20 space-y-4">
+          <div className="w-16 h-16 rounded-2xl bg-amber-950/50 text-amber-400 flex items-center justify-center mx-auto border border-amber-800/40">
+            <ShieldAlert className="w-8 h-8" />
+          </div>
+          <div>
+            <h2 className="text-lg font-bold text-white">Awaiting Company Verification</h2>
+            <p className="text-xs text-slate-300 mt-2 max-w-lg mx-auto leading-relaxed">
+              Your internship request at <strong className="text-amber-300">{activeInternship.company_name}</strong> as <strong className="text-white">{activeInternship.role}</strong> has been submitted.
+              The company must verify and confirm your internship before the daily work tracker becomes active.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 max-w-xl mx-auto pt-2">
+            <div className="p-3 bg-background rounded-xl border border-surface-border text-center">
+              <span className="text-[10px] text-slate-400 uppercase font-bold block">Company</span>
+              <span className="text-xs font-bold text-white mt-0.5 block truncate">{activeInternship.company_name}</span>
+            </div>
+            <div className="p-3 bg-background rounded-xl border border-surface-border text-center">
+              <span className="text-[10px] text-slate-400 uppercase font-bold block">Role</span>
+              <span className="text-xs font-bold text-white mt-0.5 block truncate">{activeInternship.role}</span>
+            </div>
+            <div className="p-3 bg-background rounded-xl border border-surface-border text-center">
+              <span className="text-[10px] text-slate-400 uppercase font-bold block">Start Date</span>
+              <span className="text-xs font-bold text-white mt-0.5 block">{new Date(activeInternship.start_date).toLocaleDateString()}</span>
+            </div>
+            <div className="p-3 bg-background rounded-xl border border-surface-border text-center">
+              <span className="text-[10px] text-amber-400 uppercase font-bold block">Status</span>
+              <Badge variant="warning">Pending Verification</Badge>
+            </div>
+          </div>
+
+          <p className="text-[11px] text-slate-500 pt-2">
+            Once the company verifies your internship, you'll be able to log daily work, attach evidence, and receive mentor reviews.
+          </p>
+        </Card>
+      )}
+
       {/* Review Notices & Action Alerts */}
-      {stats && stats.changes_requested_logs > 0 && (
+      {stats && stats.changes_requested_logs > 0 && !isPendingVerification && (
         <div className="p-4 rounded-xl bg-amber-950/70 border border-amber-800 text-amber-200 text-xs font-medium flex items-center justify-between gap-3 shadow-md">
           <div className="flex items-center gap-2.5">
             <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
@@ -362,22 +449,19 @@ export const StudentTracker: React.FC = () => {
           <div>
             <h2 className="text-lg font-bold text-white">Track Your Internship</h2>
             <p className="text-xs text-slate-400 mt-1 max-w-md mx-auto leading-relaxed">
-              Record your daily work, attach code commits & evidence, and build a verified institutional record of your engineering internship.
+              Select a company registered on AVUNK to start tracking your internship. The company will verify your internship before you can begin logging daily work.
             </p>
           </div>
           <Button
             variant="primary"
             size="md"
-            onClick={() => {
-              setFormError('');
-              setShowAddInternshipModal(true);
-            }}
+            onClick={handleOpenAddInternshipModal}
             icon={<Plus className="w-4 h-4 text-black" />}
           >
             + Add Active Internship
           </Button>
         </Card>
-      ) : (
+      ) : !isPendingVerification ? (
         <div className="space-y-8">
           {/* Internship Overview Banner */}
           <div className="p-6 rounded-2xl border border-slate-700 bg-gradient-to-r from-surface via-sidebar to-surface shadow-xl flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
@@ -704,7 +788,7 @@ export const StudentTracker: React.FC = () => {
             )}
           </div>
         </div>
-      )}
+      ) : null}
 
       {/* Add / Edit Daily Log Modal */}
       {showAddLogModal && (
@@ -880,12 +964,17 @@ export const StudentTracker: React.FC = () => {
         </div>
       )}
 
-      {/* Add Internship Modal */}
+      {/* Add Internship Modal — Company Dropdown from AVUNK DB */}
       {showAddInternshipModal && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto antialiased">
           <div className="bg-surface border border-surface-border rounded-2xl max-w-lg w-full p-6 space-y-5 shadow-2xl">
             <div className="flex justify-between items-center border-b border-surface-border pb-3">
-              <h3 className="text-lg font-bold text-white">+ Add Active Internship Track</h3>
+              <div>
+                <h3 className="text-lg font-bold text-white">+ Add Internship Track</h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Only companies registered on AVUNK are listed. The company must verify your internship.
+                </p>
+              </div>
               <button
                 type="button"
                 onClick={() => setShowAddInternshipModal(false)}
@@ -902,16 +991,68 @@ export const StudentTracker: React.FC = () => {
             )}
 
             <form onSubmit={handleCreateInternship} className="space-y-4">
+              {/* Company Selection from AVUNK Database */}
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">Company / Organization *</label>
-                <input
-                  type="text"
-                  value={newCompany}
-                  onChange={(e) => setNewCompany(e.target.value)}
-                  placeholder="e.g. Apex Systems Labs"
-                  className="w-full px-3 py-2 bg-background border border-surface-border rounded-lg text-xs text-white focus:outline-none focus:border-slate-400"
-                  required
-                />
+                <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  Select Company (Registered on AVUNK) *
+                </label>
+
+                {/* Search Filter */}
+                <div className="relative mb-2">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500" />
+                  <input
+                    type="text"
+                    value={companySearchTerm}
+                    onChange={(e) => setCompanySearchTerm(e.target.value)}
+                    placeholder="Search companies..."
+                    className="w-full pl-9 pr-3 py-2 bg-background border border-surface-border rounded-lg text-xs text-white focus:outline-none focus:border-slate-400"
+                  />
+                </div>
+
+                {/* Company List */}
+                <div className="max-h-40 overflow-y-auto border border-surface-border rounded-xl bg-background">
+                  {filteredCompanies.length === 0 ? (
+                    <div className="p-4 text-center text-xs text-slate-500">
+                      {registeredCompanies.length === 0
+                        ? 'Loading registered companies...'
+                        : 'No companies found matching your search. The company must be registered on AVUNK.'}
+                    </div>
+                  ) : (
+                    filteredCompanies.map((company) => (
+                      <button
+                        key={company.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedCompanyId(company.id);
+                          setSelectedCompanyName(company.company_name);
+                        }}
+                        className={`w-full flex items-center gap-3 px-4 py-2.5 text-left border-b border-surface-border/50 last:border-0 transition-colors ${
+                          selectedCompanyId === company.id
+                            ? 'bg-emerald-950/40 text-emerald-300'
+                            : 'hover:bg-surface-hover text-white'
+                        }`}
+                      >
+                        <Building2 className={`w-4 h-4 shrink-0 ${selectedCompanyId === company.id ? 'text-emerald-400' : 'text-slate-500'}`} />
+                        <div className="min-w-0">
+                          <span className="text-xs font-semibold block truncate">{company.company_name}</span>
+                          {company.industry && (
+                            <span className="text-[10px] text-slate-500 block truncate">{company.industry}</span>
+                          )}
+                        </div>
+                        {selectedCompanyId === company.id && (
+                          <Check className="w-4 h-4 text-emerald-400 ml-auto shrink-0" />
+                        )}
+                      </button>
+                    ))
+                  )}
+                </div>
+
+                {selectedCompanyName && (
+                  <div className="mt-2 text-xs text-emerald-400 flex items-center gap-1.5">
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    Selected: <strong>{selectedCompanyName}</strong>
+                  </div>
+                )}
               </div>
 
               <div>
@@ -999,9 +1140,10 @@ export const StudentTracker: React.FC = () => {
                   variant="primary"
                   size="md"
                   loading={submittingInternship}
+                  disabled={!selectedCompanyId}
                   icon={<Plus className="w-4 h-4 text-black" />}
                 >
-                  Activate Internship Track
+                  Send Verification Request
                 </Button>
               </div>
             </form>

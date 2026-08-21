@@ -3,6 +3,11 @@
  *
  * Provides typed data operations for student daily work submissions, evidence management,
  * progress calculation, and company/mentor reviews.
+ *
+ * KEY RULES:
+ * 1. Students can only select companies that are registered on AVUNK (from company_profiles).
+ * 2. New internship requests start as 'pending_verification' — the company must verify first.
+ * 3. Companies can only access student data (name, tech stack) for interns assigned to them.
  */
 
 import { supabase } from './supabase';
@@ -15,6 +20,43 @@ import type {
   DailyLogStatus,
   EvidenceType,
 } from '../types';
+
+// ============================================================
+// REGISTERED COMPANY LOOKUP (for student dropdown)
+// ============================================================
+
+export interface RegisteredCompany {
+  id: string;
+  company_name: string;
+  industry?: string;
+  website?: string;
+}
+
+/**
+ * Fetch all companies registered on AVUNK for the student internship dropdown.
+ * Only companies that have completed signup appear here.
+ */
+export async function fetchRegisteredCompanies(): Promise<RegisteredCompany[]> {
+  try {
+    const { data, error } = await supabase
+      .from('company_profiles')
+      .select('id, company_name, industry, website')
+      .order('company_name', { ascending: true });
+
+    if (error) {
+      console.warn('Error fetching registered companies:', error.message);
+      return [];
+    }
+    return (data || []) as RegisteredCompany[];
+  } catch (err) {
+    console.error('Exception in fetchRegisteredCompanies:', err);
+    return [];
+  }
+}
+
+// ============================================================
+// STUDENT INTERNSHIP CRUD
+// ============================================================
 
 /**
  * Fetch all tracked internships for a given student
@@ -39,7 +81,9 @@ export async function fetchStudentInternships(studentProfileId: string): Promise
 }
 
 /**
- * Create a new student tracked internship record
+ * Create a new student tracked internship record.
+ * IMPORTANT: Status is always 'pending_verification' — the company must verify it before
+ * the student can start logging daily work.
  */
 export async function createStudentInternship(
   studentProfileId: string,
@@ -49,7 +93,7 @@ export async function createStudentInternship(
     start_date: string;
     end_date: string;
     total_days: number;
-    company_id?: string;
+    company_id: string; // REQUIRED — must be a registered AVUNK company
     mentor_name?: string;
     mentor_email?: string;
   }
@@ -64,10 +108,10 @@ export async function createStudentInternship(
         start_date: payload.start_date,
         end_date: payload.end_date,
         total_days: payload.total_days || 30,
-        company_id: payload.company_id || null,
+        company_id: payload.company_id,
         mentor_name: payload.mentor_name || null,
         mentor_email: payload.mentor_email || null,
-        status: 'active',
+        status: 'pending_verification',
       })
       .select()
       .single();
@@ -80,6 +124,10 @@ export async function createStudentInternship(
     return { success: false, error: err.message || 'Failed to create internship record' };
   }
 }
+
+// ============================================================
+// DAILY WORK LOGS
+// ============================================================
 
 /**
  * Fetch all daily work logs with evidence and mentor reviews for an internship
@@ -148,7 +196,7 @@ export async function uploadEvidenceFile(
     const cleanFileName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
     const filePath = `internships/${studentId}/${logId || Date.now()}_${cleanFileName}`;
 
-    // Try uploading to 'resumes' bucket which is pre-configured, or 'offer-letters'
+    // Try uploading to 'resumes' bucket which is pre-configured
     const { data, error } = await supabase.storage.from('resumes').upload(filePath, file, {
       upsert: true,
     });
@@ -278,6 +326,10 @@ export async function submitDailyWorkLog(
   }
 }
 
+// ============================================================
+// MENTOR REVIEW
+// ============================================================
+
 /**
  * Submit mentor review decision on a daily log
  */
@@ -319,12 +371,59 @@ export async function submitMentorReview(
   }
 }
 
+// ============================================================
+// COMPANY INTERNSHIP VERIFICATION & INTERN ACCESS
+// ============================================================
+
 /**
- * Fetch all interns assigned to a company
+ * Verify or reject a student's internship request.
+ * Called by the company from their Intern Tracker dashboard.
+ */
+export async function verifyInternship(
+  internshipId: string,
+  decision: 'active' | 'rejected'
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    if (decision === 'rejected') {
+      // Delete the internship record entirely on rejection
+      const { error } = await supabase
+        .from('student_internships')
+        .delete()
+        .eq('id', internshipId);
+
+      if (error) return { success: false, error: error.message };
+      return { success: true };
+    }
+
+    // Verify → set status to 'active'
+    const { error } = await supabase
+      .from('student_internships')
+      .update({
+        status: 'active',
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', internshipId);
+
+    if (error) return { success: false, error: error.message };
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to verify internship' };
+  }
+}
+
+/**
+ * Fetch all interns assigned to a company.
+ * Companies can ONLY see students who have registered an internship with their company.
+ * Returns student name, tech stack (skills), and institute — nothing else.
  */
 export async function fetchCompanyInterns(
   companyProfileId: string
-): Promise<Array<StudentInternship & { student_name?: string; student_email?: string; student_institute?: string }>> {
+): Promise<Array<StudentInternship & {
+  student_name?: string;
+  student_email?: string;
+  student_institute?: string;
+  student_skills?: string[];
+}>> {
   try {
     const { data: internships, error } = await supabase
       .from('student_internships')
@@ -337,9 +436,10 @@ export async function fetchCompanyInterns(
     const studentIds = internships.map((i: any) => i.student_id);
     if (studentIds.length === 0) return [];
 
+    // Fetch ONLY name, institute, and skills — no email, no phone, no sensitive data
     const { data: students } = await supabase
       .from('student_profiles')
-      .select('id, full_name, institute_name, profile_id')
+      .select('id, full_name, institute_name, skills')
       .in('id', studentIds);
 
     const studentMap = new Map<string, any>();
@@ -351,6 +451,7 @@ export async function fetchCompanyInterns(
         ...item,
         student_name: student?.full_name || 'Student Candidate',
         student_institute: student?.institute_name || 'Partner College',
+        student_skills: student?.skills || [],
       };
     });
   } catch (err) {
@@ -358,6 +459,10 @@ export async function fetchCompanyInterns(
     return [];
   }
 }
+
+// ============================================================
+// PROGRESS STATS
+// ============================================================
 
 /**
  * Calculate progress statistics for an internship

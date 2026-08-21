@@ -191,7 +191,7 @@ export interface CreditTransaction {
 // ============================================================
 // INTERNSHIP TRACKER & WORK LOG TYPES
 // ============================================================
-export type InternshipStatus = 'active' | 'completed' | 'paused';
+export type InternshipStatus = 'pending_verification' | 'active' | 'completed' | 'paused';
 export type DailyLogStatus = 'pending' | 'approved' | 'changes_requested' | 'rejected';
 export type EvidenceType = 'file' | 'github' | 'demo' | 'link';
 

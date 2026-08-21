@@ -255,7 +255,7 @@ create table if not exists student_internships (
   start_date date not null default current_date,
   end_date date not null default (current_date + interval '30 days'),
   total_days integer not null default 30,
-  status text not null default 'active' check (status in ('active', 'completed', 'paused')),
+  status text not null default 'pending_verification' check (status in ('pending_verification', 'active', 'completed', 'paused')),
   mentor_name text,
   mentor_email text,
   created_at timestamptz default now(),

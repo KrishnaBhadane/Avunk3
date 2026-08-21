@@ -5,6 +5,7 @@ import {
   fetchInternshipDailyLogs,
   submitMentorReview,
   calculateProgressStats,
+  verifyInternship,
 } from '../../lib/internshipTracker';
 import type {
   StudentInternship,
@@ -32,12 +33,15 @@ import {
   AlertTriangle,
   Loader2,
   Send,
+  ShieldCheck,
+  ShieldX,
 } from 'lucide-react';
 
 interface ExtendedInternItem extends StudentInternship {
   student_name?: string;
   student_email?: string;
   student_institute?: string;
+  student_skills?: string[];
 }
 
 export const CompanyInternTracker: React.FC = () => {
@@ -58,6 +62,11 @@ export const CompanyInternTracker: React.FC = () => {
 
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
+  const [verifyingId, setVerifyingId] = useState<string | null>(null);
+
+  // Separate pending verification and verified interns
+  const pendingInterns = interns.filter((i) => i.status === 'pending_verification');
+  const verifiedInterns = interns.filter((i) => i.status !== 'pending_verification');
 
   // Fetch interns for company
   const loadInterns = useCallback(async () => {
@@ -67,11 +76,17 @@ export const CompanyInternTracker: React.FC = () => {
     const list = await fetchCompanyInterns(companyProfile.id);
     setInterns(list);
 
-    if (list.length > 0) {
-      setSelectedIntern(list[0]);
-      const logs = await fetchInternshipDailyLogs(list[0].id);
+    // Auto-select the first verified intern
+    const verified = list.filter((i) => i.status !== 'pending_verification');
+    if (verified.length > 0) {
+      setSelectedIntern(verified[0]);
+      const logs = await fetchInternshipDailyLogs(verified[0].id);
       setDailyLogs(logs);
-      setStats(calculateProgressStats(list[0], logs));
+      setStats(calculateProgressStats(verified[0], logs));
+    } else {
+      setSelectedIntern(null);
+      setDailyLogs([]);
+      setStats(null);
     }
 
     setLoading(false);
@@ -83,6 +98,7 @@ export const CompanyInternTracker: React.FC = () => {
 
   // Select an intern to view their work logs
   const handleSelectIntern = async (intern: ExtendedInternItem) => {
+    if (intern.status === 'pending_verification') return; // Can't view logs for unverified
     setSelectedIntern(intern);
     setLoading(true);
     setReviewingLogId(null);
@@ -91,6 +107,29 @@ export const CompanyInternTracker: React.FC = () => {
     setDailyLogs(logs);
     setStats(calculateProgressStats(intern, logs));
     setLoading(false);
+  };
+
+  // Verify or reject intern
+  const handleVerifyIntern = async (internshipId: string, decision: 'active' | 'rejected') => {
+    setVerifyingId(internshipId);
+    setError('');
+
+    const res = await verifyInternship(internshipId, decision);
+    if (!res.success) {
+      setError(res.error || 'Failed to process verification');
+      setVerifyingId(null);
+      return;
+    }
+
+    setNotice(
+      decision === 'active'
+        ? 'Intern verified! They can now start logging daily work.'
+        : 'Internship request rejected and removed.'
+    );
+    setTimeout(() => setNotice(''), 5000);
+    setVerifyingId(null);
+
+    await loadInterns();
   };
 
   // Submit mentor review decision
@@ -155,7 +194,7 @@ export const CompanyInternTracker: React.FC = () => {
             Intern Tracker & Mentor Review Portal
           </h1>
           <p className="text-xs text-slate-400 mt-1">
-            Monitor intern daily deliverables, audit submitted code/evidence, and approve work logs.
+            Verify intern registrations, monitor daily deliverables, and approve work logs. Only your company's interns are shown.
           </p>
         </div>
 
@@ -180,25 +219,102 @@ export const CompanyInternTracker: React.FC = () => {
         </div>
       )}
 
+      {/* PENDING VERIFICATION REQUESTS */}
+      {pendingInterns.length > 0 && (
+        <Card className="p-6 border-amber-800/50 bg-amber-950/10 space-y-4">
+          <div className="flex items-center gap-2.5 border-b border-amber-800/30 pb-3">
+            <AlertTriangle className="w-5 h-5 text-amber-400" />
+            <h2 className="text-sm font-bold text-white uppercase tracking-wider">
+              Pending Verification Requests ({pendingInterns.length})
+            </h2>
+          </div>
+          <p className="text-xs text-slate-300">
+            These students claim to be interning at your company. You must verify or reject each request. Until verified, they cannot access the internship tracker.
+          </p>
+
+          <div className="space-y-3">
+            {pendingInterns.map((intern) => (
+              <div
+                key={intern.id}
+                className="p-4 bg-background rounded-xl border border-surface-border flex flex-col md:flex-row md:items-center justify-between gap-4"
+              >
+                <div>
+                  <h4 className="text-sm font-bold text-white">{intern.student_name}</h4>
+                  <p className="text-xs text-slate-300 mt-0.5">
+                    Role: <strong>{intern.role}</strong>
+                  </p>
+                  <div className="flex items-center gap-3 text-[11px] text-slate-400 mt-1 flex-wrap">
+                    <span className="flex items-center gap-1">
+                      <GraduationCap className="w-3 h-3" />
+                      {intern.student_institute}
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <Calendar className="w-3 h-3" />
+                      {new Date(intern.start_date).toLocaleDateString()} – {new Date(intern.end_date).toLocaleDateString()}
+                    </span>
+                    <span>{intern.total_days} days</span>
+                  </div>
+                  {/* Show student skills / tech stack */}
+                  {intern.student_skills && intern.student_skills.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mt-2">
+                      {intern.student_skills.map((skill, idx) => (
+                        <span key={idx} className="px-2 py-0.5 bg-surface-border text-slate-300 rounded text-[10px] font-medium">
+                          {skill}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    loading={verifyingId === intern.id}
+                    onClick={() => handleVerifyIntern(intern.id, 'active')}
+                    icon={<ShieldCheck className="w-3.5 h-3.5 text-black" />}
+                  >
+                    Verify Intern
+                  </Button>
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    loading={verifyingId === intern.id}
+                    onClick={() => handleVerifyIntern(intern.id, 'rejected')}
+                    icon={<ShieldX className="w-3.5 h-3.5" />}
+                  >
+                    Reject
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
       {interns.length === 0 ? (
         <Card className="p-12 text-center border-dashed space-y-3">
           <Users className="w-10 h-10 text-slate-600 mx-auto" />
           <h2 className="text-lg font-bold text-white">No Interns Assigned Yet</h2>
           <p className="text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
-            When students register and add your company as their active internship provider, their profile and daily deliverables will appear here for mentor review.
+            When students register and add your company as their active internship provider, their verification request will appear here. Only verified interns will have tracker access.
           </p>
         </Card>
-      ) : (
+      ) : verifiedInterns.length === 0 && pendingInterns.length > 0 ? (
+        <Card className="p-8 text-center border-dashed space-y-2">
+          <p className="text-sm text-slate-400">No verified interns yet. Verify pending requests above to enable intern tracking.</p>
+        </Card>
+      ) : verifiedInterns.length > 0 ? (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Interns List Sidebar */}
           <div className="space-y-3">
             <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
               <Users className="w-4 h-4 text-slate-400" />
-              Assigned Interns ({interns.length})
+              Verified Interns ({verifiedInterns.length})
             </h3>
 
             <div className="space-y-2">
-              {interns.map((intern) => {
+              {verifiedInterns.map((intern) => {
                 const isSelected = selectedIntern?.id === intern.id;
 
                 return (
@@ -219,6 +335,19 @@ export const CompanyInternTracker: React.FC = () => {
                           <GraduationCap className="w-3.5 h-3.5 text-slate-400" />
                           {intern.student_institute}
                         </p>
+                        {/* Show tech stack */}
+                        {intern.student_skills && intern.student_skills.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-1.5">
+                            {intern.student_skills.slice(0, 4).map((skill, idx) => (
+                              <span key={idx} className="px-1.5 py-0.5 bg-surface-border text-slate-400 rounded text-[9px] font-medium">
+                                {skill}
+                              </span>
+                            ))}
+                            {intern.student_skills.length > 4 && (
+                              <span className="text-[9px] text-slate-500">+{intern.student_skills.length - 4}</span>
+                            )}
+                          </div>
+                        )}
                       </div>
 
                       <Badge variant={intern.status === 'completed' ? 'success' : 'info'}>
@@ -246,6 +375,16 @@ export const CompanyInternTracker: React.FC = () => {
                   <p className="text-xs text-slate-300 mt-0.5">
                     {selectedIntern.role} • {selectedIntern.student_institute}
                   </p>
+                  {/* Show tech stack */}
+                  {selectedIntern.student_skills && selectedIntern.student_skills.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mt-2">
+                      {selectedIntern.student_skills.map((skill, idx) => (
+                        <span key={idx} className="px-2 py-0.5 bg-surface-border text-slate-300 rounded text-[10px] font-medium">
+                          {skill}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                   <div className="flex items-center gap-3 text-[11px] text-slate-400 mt-2">
                     <span className="flex items-center gap-1">
                       <Calendar className="w-3 h-3 text-slate-400" />
@@ -506,7 +645,7 @@ export const CompanyInternTracker: React.FC = () => {
             </div>
           )}
         </div>
-      )}
+      ) : null}
     </div>
   );
 };
