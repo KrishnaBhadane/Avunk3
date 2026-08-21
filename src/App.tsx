@@ -25,6 +25,7 @@ import { TPStudents } from './pages/tp/Students';
 import { TPStudentDetail } from './pages/tp/StudentDetail';
 import { TPInsights } from './pages/tp/Insights';
 import { TPProfileView } from './pages/tp/Profile';
+import { TPInternshipMonitor } from './pages/tp/InternshipMonitor';
 
 // Company Pages
 import { CompanyDashboard } from './pages/company/Dashboard';
@@ -136,6 +137,14 @@ const AppRoutes: React.FC = () => {
           element={
             <ProtectedRoute allowedRole="tp">
               <TPDashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/tp/internship-monitor"
+          element={
+            <ProtectedRoute allowedRole="tp">
+              <TPInternshipMonitor />
             </ProtectedRoute>
           }
         />

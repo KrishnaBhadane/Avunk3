@@ -417,7 +417,8 @@ export async function verifyInternship(
  * Returns student name, tech stack (skills), and institute — nothing else.
  */
 export async function fetchCompanyInterns(
-  companyProfileId: string
+  companyProfileId: string,
+  companyName?: string
 ): Promise<Array<StudentInternship & {
   student_name?: string;
   student_email?: string;
@@ -425,11 +426,15 @@ export async function fetchCompanyInterns(
   student_skills?: string[];
 }>> {
   try {
-    const { data: internships, error } = await supabase
-      .from('student_internships')
-      .select('*')
-      .eq('company_id', companyProfileId)
-      .order('created_at', { ascending: false });
+    let query = supabase.from('student_internships').select('*');
+
+    if (companyName && companyName.trim()) {
+      query = query.or(`company_id.eq.${companyProfileId},company_name.ilike.%${companyName.trim()}%`);
+    } else {
+      query = query.eq('company_id', companyProfileId);
+    }
+
+    const { data: internships, error } = await query.order('created_at', { ascending: false });
 
     if (error || !internships) return [];
 
@@ -456,6 +461,197 @@ export async function fetchCompanyInterns(
     });
   } catch (err) {
     console.error('Error in fetchCompanyInterns:', err);
+    return [];
+  }
+}
+
+// ============================================================
+// COMPANY JOB APPLICATIONS MANAGEMENT
+// ============================================================
+
+export interface CompanyApplicantItem {
+  id: string;
+  student_id: string;
+  requirement_id?: string;
+  company_id: string;
+  status: string;
+  applied_at: string;
+  student_name: string;
+  student_institute: string;
+  student_department?: string;
+  student_graduation_year?: number;
+  student_skills: string[];
+  requirement_title?: string;
+}
+
+/**
+ * Fetch all candidate job applications submitted to this company
+ */
+export async function fetchCompanyApplications(
+  companyProfileId: string
+): Promise<CompanyApplicantItem[]> {
+  try {
+    const { data: apps, error } = await supabase
+      .from('internship_applications')
+      .select('*')
+      .eq('company_id', companyProfileId)
+      .order('applied_at', { ascending: false });
+
+    if (error || !apps || apps.length === 0) return [];
+
+    const studentIds = apps.map((a: any) => a.student_id);
+    const reqIds = apps.map((a: any) => a.requirement_id).filter(Boolean);
+
+    // Fetch student info
+    const { data: students } = await supabase
+      .from('student_profiles')
+      .select('id, full_name, institute_name, department, graduation_year, skills')
+      .in('id', studentIds);
+
+    const studentMap = new Map<string, any>();
+    (students || []).forEach((s: any) => studentMap.set(s.id, s));
+
+    // Fetch requirement titles
+    let reqMap = new Map<string, string>();
+    if (reqIds.length > 0) {
+      const { data: reqs } = await supabase
+        .from('internship_requirements')
+        .select('id, title')
+        .in('id', reqIds);
+
+      (reqs || []).forEach((r: any) => reqMap.set(r.id, r.title));
+    }
+
+    return apps.map((app: any) => {
+      const student = studentMap.get(app.student_id);
+      return {
+        id: app.id,
+        student_id: app.student_id,
+        requirement_id: app.requirement_id,
+        company_id: app.company_id,
+        status: app.status || 'applied',
+        applied_at: app.applied_at || app.created_at || new Date().toISOString(),
+        student_name: student?.full_name || 'Applicant Candidate',
+        student_institute: student?.institute_name || 'Partner Institute',
+        student_department: student?.department,
+        student_graduation_year: student?.graduation_year,
+        student_skills: student?.skills || [],
+        requirement_title: app.requirement_id ? reqMap.get(app.requirement_id) || 'General Internship' : 'Direct Application',
+      };
+    });
+  } catch (err) {
+    console.error('Error fetching company applications:', err);
+    return [];
+  }
+}
+
+/**
+ * Update candidate application status (shortlisted, under_review, rejected, accepted)
+ */
+export async function updateApplicationStatus(
+  applicationId: string,
+  newStatus: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const { error } = await supabase
+      .from('internship_applications')
+      .update({ status: newStatus })
+      .eq('id', applicationId);
+
+    if (error) return { success: false, error: error.message };
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to update status' };
+  }
+}
+
+// ============================================================
+// T&P INTERNSHIP OVERSIGHT — ALL INTERNSHIPS ACROSS ALL COMPANIES
+// ============================================================
+
+export interface TPInternshipRecord {
+  internship: StudentInternship;
+  student_name: string;
+  student_institute: string;
+  student_skills: string[];
+  company_name: string;
+  total_logs: number;
+  approved_logs: number;
+  pending_logs: number;
+  rejected_logs: number;
+  total_hours: number;
+  consistency_percent: number;
+}
+
+/**
+ * Fetch ALL student internships across all companies — for T&P oversight.
+ * T&P can see every student's internship status, company, logs summary, and effectiveness.
+ */
+export async function fetchAllInternshipsForTP(): Promise<TPInternshipRecord[]> {
+  try {
+    // Get all student internships
+    const { data: internships, error } = await supabase
+      .from('student_internships')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error || !internships || internships.length === 0) return [];
+
+    const studentIds = [...new Set(internships.map((i: any) => i.student_id))];
+
+    // Fetch student names, institutes, and skills
+    const { data: students } = await supabase
+      .from('student_profiles')
+      .select('id, full_name, institute_name, skills')
+      .in('id', studentIds);
+
+    const studentMap = new Map<string, any>();
+    (students || []).forEach((s: any) => studentMap.set(s.id, s));
+
+    // Fetch all daily logs for all these internships
+    const internshipIds = internships.map((i: any) => i.id);
+    const { data: allLogs } = await supabase
+      .from('internship_daily_logs')
+      .select('internship_id, status, hours_worked')
+      .in('internship_id', internshipIds);
+
+    // Group logs by internship_id
+    const logsByInternship = new Map<string, any[]>();
+    (allLogs || []).forEach((log: any) => {
+      const existing = logsByInternship.get(log.internship_id) || [];
+      logsByInternship.set(log.internship_id, [...existing, log]);
+    });
+
+    return internships.map((item: any) => {
+      const student = studentMap.get(item.student_id);
+      const logs = logsByInternship.get(item.id) || [];
+      const approved = logs.filter((l: any) => l.status === 'approved').length;
+      const pending = logs.filter((l: any) => l.status === 'pending').length;
+      const rejected = logs.filter((l: any) => l.status === 'rejected').length;
+      const totalHours = logs.reduce((acc: number, l: any) => acc + (Number(l.hours_worked) || 0), 0);
+
+      // Consistency: approved work per total days
+      const totalDays = item.total_days || 30;
+      const logsCount = logs.length;
+      const rawScore = totalDays > 0 ? (approved * 1.0 + pending * 0.5) / Math.max(logsCount, 1) : 0;
+      const consistency = logsCount > 0 ? Math.min(100, Math.round(rawScore * 100)) : 0;
+
+      return {
+        internship: item as StudentInternship,
+        student_name: student?.full_name || 'Unknown Student',
+        student_institute: student?.institute_name || 'Unknown Institute',
+        student_skills: student?.skills || [],
+        company_name: item.company_name,
+        total_logs: logsCount,
+        approved_logs: approved,
+        pending_logs: pending,
+        rejected_logs: rejected,
+        total_hours: totalHours,
+        consistency_percent: consistency,
+      };
+    });
+  } catch (err) {
+    console.error('Error in fetchAllInternshipsForTP:', err);
     return [];
   }
 }

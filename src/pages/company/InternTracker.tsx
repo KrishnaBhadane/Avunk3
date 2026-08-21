@@ -73,7 +73,7 @@ export const CompanyInternTracker: React.FC = () => {
     if (!companyProfile) return;
     setLoading(true);
 
-    const list = await fetchCompanyInterns(companyProfile.id);
+    const list = await fetchCompanyInterns(companyProfile.id, companyProfile.company_name);
     setInterns(list);
 
     // Auto-select the first verified intern

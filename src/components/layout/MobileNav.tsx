@@ -27,6 +27,7 @@ export const MobileNav: React.FC = () => {
 
   const tpLinks = [
     { to: '/tp', label: 'Home', icon: LayoutDashboard },
+    { to: '/tp/internship-monitor', label: 'Internships', icon: Clock },
     { to: '/tp/students', label: 'Students', icon: Users },
     { to: '/tp/insights', label: 'Analytics', icon: TrendingUp },
     { to: '/tp/profile', label: 'Profile', icon: User },
