@@ -124,27 +124,48 @@ export const StudentOfferCheck: React.FC = () => {
       let fileName = 'Pasted_Offer_Letter.txt';
       let fileType = 'text/plain';
       let fileSize = pastedText.length;
+      let fileText = '';
 
       if (inputMode === 'upload' && selectedFile) {
-        filePath = `${studentProfile.id}/${Date.now()}_${selectedFile.name}`;
+        // Extract readable text locally
+        try {
+          if (
+            selectedFile.type.includes('text') ||
+            selectedFile.name.endsWith('.txt') ||
+            selectedFile.name.endsWith('.md')
+          ) {
+            fileText = await selectedFile.text();
+          }
+        } catch (readErr) {
+          console.warn('Local offer text read note:', readErr);
+        }
+
+        filePath = `${studentProfile.id}/${Date.now()}_${selectedFile.name.replace(/\s+/g, '_')}`;
         fileName = selectedFile.name;
-        fileType = selectedFile.type;
+        fileType = selectedFile.type || 'application/pdf';
         fileSize = selectedFile.size;
 
-        const { error: uploadError } = await supabase.storage
-          .from('offer-letters')
-          .upload(filePath, selectedFile);
+        try {
+          const { error: uploadError } = await supabase.storage
+            .from('offer-letters')
+            .upload(filePath, selectedFile, { upsert: true });
 
-        if (uploadError) {
-          setError('Failed to upload file to storage: ' + uploadError.message);
-          setUploading(false);
-          return;
+          if (uploadError) {
+            console.warn('Offer storage note (continuing analysis):', uploadError.message);
+          }
+        } catch (storageErr) {
+          console.warn('Offer storage network note:', storageErr);
         }
       } else {
-        // Upload pasted text as TXT to storage
+        fileText = pastedText;
         filePath = `${studentProfile.id}/${Date.now()}_offer_text.txt`;
-        const blob = new Blob([pastedText], { type: 'text/plain' });
-        await supabase.storage.from('offer-letters').upload(filePath, blob);
+
+        try {
+          const blob = new Blob([pastedText], { type: 'text/plain' });
+          await supabase.storage.from('offer-letters').upload(filePath, blob, { upsert: true });
+        } catch (storageErr) {
+          console.warn('Offer paste storage note:', storageErr);
+        }
       }
 
       // Create internship_offers DB record
@@ -162,7 +183,7 @@ export const StudentOfferCheck: React.FC = () => {
         .single();
 
       if (dbError || !offerRecord) {
-        setError('Failed to create offer record: ' + (dbError?.message || 'Unknown error'));
+        setError('Failed to create offer record: ' + (dbError?.message || 'Database error'));
         setUploading(false);
         return;
       }
@@ -170,9 +191,10 @@ export const StudentOfferCheck: React.FC = () => {
       setUploading(false);
 
       // Trigger Gemini AI verification
-      await runAnalysis(offerRecord.id, inputMode === 'paste' ? pastedText : undefined);
+      await runAnalysis(offerRecord.id, fileText || (inputMode === 'paste' ? pastedText : undefined));
     } catch (err: any) {
-      setError('Analysis failed: ' + (err.message || 'Unknown error'));
+      console.error('Offer verification submission error:', err);
+      setError('Verification encounter: ' + (err.message || 'Please retry'));
       setUploading(false);
     }
   };

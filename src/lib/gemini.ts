@@ -540,12 +540,16 @@ export async function analyzeResume(
         .maybeSingle();
 
       if (resumeRecord?.file_path) {
-        const { data: fileData, error: downloadError } = await supabase.storage
-          .from('resumes')
-          .download(resumeRecord.file_path);
+        try {
+          const { data: fileData, error: downloadError } = await supabase.storage
+            .from('resumes')
+            .download(resumeRecord.file_path);
 
-        if (!downloadError && fileData) {
-          resumeContent = await fileData.text();
+          if (!downloadError && fileData) {
+            resumeContent = await fileData.text();
+          }
+        } catch (downloadErr) {
+          console.warn('Storage resume download note:', downloadErr);
         }
       }
     }
@@ -760,12 +764,16 @@ export async function analyzeOffer(
         .maybeSingle();
 
       if (offerRecord?.file_path) {
-        const { data: fileData, error: downloadError } = await supabase.storage
-          .from('offer-letters')
-          .download(offerRecord.file_path);
+        try {
+          const { data: fileData, error: downloadError } = await supabase.storage
+            .from('offer-letters')
+            .download(offerRecord.file_path);
 
-        if (!downloadError && fileData) {
-          offerContent = await fileData.text();
+          if (!downloadError && fileData) {
+            offerContent = await fileData.text();
+          }
+        } catch (downloadErr) {
+          console.warn('Storage offer download note:', downloadErr);
         }
       }
     }
