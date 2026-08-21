@@ -66,6 +66,27 @@ const AppRoutes: React.FC = () => {
           }
         />
 
+        {/* Universal Student Tracker Route (redirects based on role) */}
+        <Route
+          path="/student-tracker"
+          element={
+            user ? (
+              <Navigate
+                to={
+                  user.role === 'student'
+                    ? '/student/tracker'
+                    : user.role === 'tp'
+                    ? '/tp/internship-monitor'
+                    : '/company/intern-tracker'
+                }
+                replace
+              />
+            ) : (
+              <Navigate to="/login" replace />
+            )
+          }
+        />
+
         {/* Student Protected Routes */}
         <Route
           path="/student"

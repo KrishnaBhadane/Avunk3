@@ -266,3 +266,94 @@ export interface InternshipProgressStats {
   activity_consistency_percent: number;
 }
 
+// ============================================================
+// STUDENT TASK MANAGEMENT & ATTENDANCE TYPES
+// ============================================================
+export type TaskStatus =
+  | 'not_started'
+  | 'in_progress'
+  | 'submitted'
+  | 'under_review'
+  | 'completed'
+  | 'changes_requested'
+  | 'overdue';
+
+export type TaskPriority = 'low' | 'medium' | 'high';
+export type TaskSubmissionType = 'text' | 'file' | 'github' | 'url' | 'multiple';
+
+export interface TaskSubmission {
+  id: string;
+  task_id: string;
+  student_id: string;
+  submission_text?: string;
+  file_url?: string;
+  file_name?: string;
+  github_url?: string;
+  demo_url?: string;
+  status: 'submitted' | 'under_review' | 'completed' | 'changes_requested' | 'rejected';
+  submitted_at: string;
+  reviewed_at?: string;
+  reviewed_by?: string;
+  reviewer_name?: string;
+  review_comment?: string;
+}
+
+export interface InternshipTask {
+  id: string;
+  internship_id?: string;
+  student_id: string;
+  company_id?: string;
+  college_id?: string;
+  created_by?: string;
+  created_by_role: 'tp' | 'company';
+  task_source: string;
+  title: string;
+  description: string;
+  instructions?: string;
+  deadline: string;
+  priority: TaskPriority;
+  submission_required: boolean;
+  submission_type: TaskSubmissionType;
+  status: TaskStatus;
+  created_at: string;
+  updated_at: string;
+  submissions?: TaskSubmission[];
+  student_name?: string;
+  company_name?: string;
+  completed_at?: string;
+}
+
+export type AttendanceStatus = 'present' | 'absent' | 'half_day' | 'leave';
+
+export interface InternshipAttendanceRecord {
+  id: string;
+  internship_id: string;
+  student_id: string;
+  company_id: string;
+  date: string;
+  status: AttendanceStatus;
+  marked_by?: string;
+  created_at: string;
+}
+
+export interface StudentTaskProgressStats {
+  total_tasks: number;
+  completed_tasks: number;
+  pending_tasks: number;
+  overdue_tasks: number;
+  under_review_tasks: number;
+  changes_requested_tasks: number;
+  progress_percent: number;
+  has_tasks: boolean;
+}
+
+export interface AttendanceSummaryStats {
+  enabled: boolean;
+  present_days: number;
+  absent_days: number;
+  half_days: number;
+  leave_days: number;
+  total_marked_days: number;
+  attendance_rate_percent: number;
+}
+

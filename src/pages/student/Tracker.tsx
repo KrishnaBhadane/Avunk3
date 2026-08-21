@@ -8,6 +8,11 @@ import {
   uploadEvidenceFile,
   calculateProgressStats,
   fetchRegisteredCompanies,
+  fetchStudentTasks,
+  submitTaskDeliverable,
+  calculateTaskProgress,
+  fetchStudentAttendance,
+  calculateAttendanceStats,
 } from '../../lib/internshipTracker';
 import type { RegisteredCompany } from '../../lib/internshipTracker';
 import type {
@@ -15,6 +20,10 @@ import type {
   InternshipDailyLog,
   InternshipProgressStats,
   EvidenceType,
+  InternshipTask,
+  StudentTaskProgressStats,
+  InternshipAttendanceRecord,
+  AttendanceSummaryStats,
 } from '../../types';
 import { Card } from '../../components/common/Card';
 import { Button } from '../../components/common/Button';
@@ -25,23 +34,20 @@ import {
   CheckCircle2,
   Plus,
   Building2,
-  Briefcase,
-  FileText,
   Code2,
   Globe,
   Upload,
-  ExternalLink,
   ChevronDown,
   ChevronUp,
-  MessageSquare,
-  AlertTriangle,
   Loader2,
-  Award,
   Check,
   X,
   FileCheck,
   ShieldAlert,
   Search,
+  ListTodo,
+  UserCheck,
+  Send,
 } from 'lucide-react';
 
 export const StudentTracker: React.FC = () => {
@@ -49,23 +55,44 @@ export const StudentTracker: React.FC = () => {
 
   const [_internships, setInternships] = useState<StudentInternship[]>([]);
   const [activeInternship, setActiveInternship] = useState<StudentInternship | null>(null);
-  const [dailyLogs, setDailyLogs] = useState<InternshipDailyLog[]>([]);
-  const [stats, setStats] = useState<InternshipProgressStats | null>(null);
+  const [activeTab, setActiveTab] = useState<'tasks' | 'logs' | 'attendance'>('tasks');
   const [loading, setLoading] = useState(true);
 
-  // Registered Companies for dropdown
-  const [registeredCompanies, setRegisteredCompanies] = useState<RegisteredCompany[]>([]);
-  const [companySearchTerm, setCompanySearchTerm] = useState('');
-  const [loadingCompanies, setLoadingCompanies] = useState(false);
-  const [companyInputMode, setCompanyInputMode] = useState<'registered' | 'custom'>('registered');
+  // Tasks State
+  const [tasks, setTasks] = useState<InternshipTask[]>([]);
+  const [taskStats, setTaskStats] = useState<StudentTaskProgressStats | null>(null);
+  const [selectedTask, setSelectedTask] = useState<InternshipTask | null>(null);
+  const [taskFilter, setTaskFilter] = useState<string>('all');
 
-  // Modals
+  // Task Submission Form State
+  const [showTaskSubmitModal, setShowTaskSubmitModal] = useState(false);
+  const [taskSubmissionText, setTaskSubmissionText] = useState('');
+  const [taskGithubUrl, setTaskGithubUrl] = useState('');
+  const [taskDemoUrl, setTaskDemoUrl] = useState('');
+  const [taskFile, setTaskFile] = useState<File | null>(null);
+  const [submittingTask, setSubmittingTask] = useState(false);
+
+  // Daily Logs & Progress
+  const [dailyLogs, setDailyLogs] = useState<InternshipDailyLog[]>([]);
+  const [stats, setStats] = useState<InternshipProgressStats | null>(null);
+
+  // Attendance State
+  const [attendanceRecords, setAttendanceRecords] = useState<InternshipAttendanceRecord[]>([]);
+  const [attendanceStats, setAttendanceStats] = useState<AttendanceSummaryStats | null>(null);
+
+  // Modals & Forms
   const [showAddInternshipModal, setShowAddInternshipModal] = useState(false);
   const [showAddLogModal, setShowAddLogModal] = useState(false);
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
   const [editingLog, setEditingLog] = useState<InternshipDailyLog | null>(null);
 
-  // Add Internship Form State
+  // Registered Companies for Add Internship Modal
+  const [registeredCompanies, setRegisteredCompanies] = useState<RegisteredCompany[]>([]);
+  const [companySearchTerm, setCompanySearchTerm] = useState('');
+  const [loadingCompanies, setLoadingCompanies] = useState(false);
+  const [companyInputMode, setCompanyInputMode] = useState<'registered' | 'custom'>('registered');
+
+  // Add Internship Form
   const [selectedCompanyId, setSelectedCompanyId] = useState('');
   const [selectedCompanyName, setSelectedCompanyName] = useState('');
   const [newRole, setNewRole] = useState('');
@@ -78,7 +105,7 @@ export const StudentTracker: React.FC = () => {
   const [newMentorEmail, setNewMentorEmail] = useState('');
   const [submittingInternship, setSubmittingInternship] = useState(false);
 
-  // Daily Log Form State
+  // Daily Log Form
   const [logDate, setLogDate] = useState(new Date().toISOString().split('T')[0]);
   const [logTitle, setLogTitle] = useState('');
   const [logHours, setLogHours] = useState(4);
@@ -86,49 +113,58 @@ export const StudentTracker: React.FC = () => {
   const [logTasksCompleted, setLogTasksCompleted] = useState('');
   const [logLearnings, setLogLearnings] = useState('');
   const [logBlockers, setLogBlockers] = useState('');
-
-  // Evidence Inputs in Log Form
   const [githubUrl, setGithubUrl] = useState('');
   const [demoUrl, setDemoUrl] = useState('');
-  const [customLinkUrl, setCustomLinkUrl] = useState('');
-  const [customLinkTitle, setCustomLinkTitle] = useState('');
   const [evidenceFile, setEvidenceFile] = useState<File | null>(null);
   const [uploadingLog, setUploadingLog] = useState(false);
 
   const [formError, setFormError] = useState('');
   const [successNotice, setSuccessNotice] = useState('');
 
-  // Fetch student internships on mount
+  // Fetch student internships & tasks on mount
   const loadData = useCallback(async () => {
     if (!studentProfile) return;
     setLoading(true);
 
-    const list = await fetchStudentInternships(studentProfile.id);
-    setInternships(list);
+    try {
+      // 1. Fetch internships
+      const list = await fetchStudentInternships(studentProfile.id);
+      setInternships(list);
 
-    if (list.length > 0) {
-      // Prioritize active internship, then pending_verification, then first
-      const active = list.find((i) => i.status === 'active')
-        || list.find((i) => i.status === 'pending_verification')
-        || list[0];
-      setActiveInternship(active);
+      if (list.length > 0) {
+        const active = list.find((i) => i.status === 'active')
+          || list.find((i) => i.status === 'pending_verification')
+          || list[0];
+        setActiveInternship(active);
 
-      // Only fetch daily logs if internship is verified (active/completed/paused)
-      if (active.status !== 'pending_verification') {
-        const logs = await fetchInternshipDailyLogs(active.id);
-        setDailyLogs(logs);
-        setStats(calculateProgressStats(active, logs));
+        if (active.status !== 'pending_verification') {
+          const logs = await fetchInternshipDailyLogs(active.id);
+          setDailyLogs(logs);
+          setStats(calculateProgressStats(active, logs));
+        } else {
+          setDailyLogs([]);
+          setStats(null);
+        }
       } else {
+        setActiveInternship(null);
         setDailyLogs([]);
         setStats(null);
       }
-    } else {
-      setActiveInternship(null);
-      setDailyLogs([]);
-      setStats(null);
-    }
 
-    setLoading(false);
+      // 2. Fetch assigned tasks
+      const studentTasks = await fetchStudentTasks(studentProfile.id);
+      setTasks(studentTasks);
+      setTaskStats(calculateTaskProgress(studentTasks));
+
+      // 3. Fetch attendance
+      const attRecords = await fetchStudentAttendance(studentProfile.id);
+      setAttendanceRecords(attRecords);
+      setAttendanceStats(calculateAttendanceStats(attRecords));
+    } catch (err) {
+      console.error('Error loading student tracker data:', err);
+    } finally {
+      setLoading(false);
+    }
   }, [studentProfile]);
 
   useEffect(() => {
@@ -207,7 +243,71 @@ export const StudentTracker: React.FC = () => {
     await loadData();
   };
 
-  // Open modal to add or edit log
+  // Open Task Submission Modal
+  const handleOpenSubmitTask = (task: InternshipTask) => {
+    setSelectedTask(task);
+    setTaskSubmissionText('');
+    setTaskGithubUrl('');
+    setTaskDemoUrl('');
+    setTaskFile(null);
+    setFormError('');
+    setShowTaskSubmitModal(true);
+  };
+
+  // Submit Task Deliverable
+  const handleSubmitTaskDeliverable = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!studentProfile || !selectedTask) return;
+
+    if (!taskSubmissionText.trim() && !taskFile && !taskGithubUrl.trim() && !taskDemoUrl.trim()) {
+      setFormError('Please provide a written response, upload a file, or enter a GitHub/demo URL.');
+      return;
+    }
+
+    setSubmittingTask(true);
+    setFormError('');
+
+    try {
+      let uploadedFileUrl: string | undefined = undefined;
+      let uploadedFileName: string | undefined = undefined;
+
+      if (taskFile) {
+        const uploadRes = await uploadEvidenceFile(taskFile, studentProfile.id, selectedTask.id);
+        if (uploadRes.success && uploadRes.url) {
+          uploadedFileUrl = uploadRes.url;
+          uploadedFileName = taskFile.name;
+        }
+      }
+
+      const res = await submitTaskDeliverable({
+        task_id: selectedTask.id,
+        student_id: studentProfile.id,
+        submission_text: taskSubmissionText.trim() || undefined,
+        file_url: uploadedFileUrl,
+        file_name: uploadedFileName,
+        github_url: taskGithubUrl.trim() || undefined,
+        demo_url: taskDemoUrl.trim() || undefined,
+      });
+
+      if (!res.success) {
+        setFormError(res.error || 'Failed to submit task deliverable');
+        setSubmittingTask(false);
+        return;
+      }
+
+      setShowTaskSubmitModal(false);
+      setSubmittingTask(false);
+      setSuccessNotice(`✓ Task "${selectedTask.title}" submitted successfully! Waiting for verification.`);
+      setTimeout(() => setSuccessNotice(''), 6000);
+
+      await loadData();
+    } catch (err: any) {
+      setFormError(err.message || 'Submission error');
+      setSubmittingTask(false);
+    }
+  };
+
+  // Open Daily Log Modal
   const handleOpenAddLog = (existing?: InternshipDailyLog) => {
     setFormError('');
     if (existing) {
@@ -221,8 +321,6 @@ export const StudentTracker: React.FC = () => {
       setLogBlockers(existing.blockers || '');
       setGithubUrl('');
       setDemoUrl('');
-      setCustomLinkUrl('');
-      setCustomLinkTitle('');
       setEvidenceFile(null);
     } else {
       setEditingLog(null);
@@ -235,14 +333,12 @@ export const StudentTracker: React.FC = () => {
       setLogBlockers('');
       setGithubUrl('');
       setDemoUrl('');
-      setCustomLinkUrl('');
-      setCustomLinkTitle('');
       setEvidenceFile(null);
     }
     setShowAddLogModal(true);
   };
 
-  // Submit daily work log
+  // Submit Daily Log
   const handleSubmitDailyLog = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!studentProfile || !activeInternship) return;
@@ -266,7 +362,6 @@ export const StudentTracker: React.FC = () => {
         url?: string;
       }> = [];
 
-      // 1. If file attached, upload to storage
       if (evidenceFile) {
         const uploadRes = await uploadEvidenceFile(evidenceFile, studentProfile.id);
         if (uploadRes.success && uploadRes.url) {
@@ -282,7 +377,6 @@ export const StudentTracker: React.FC = () => {
         }
       }
 
-      // 2. If GitHub URL
       if (githubUrl.trim()) {
         evidenceItems.push({
           evidence_type: 'github',
@@ -291,21 +385,11 @@ export const StudentTracker: React.FC = () => {
         });
       }
 
-      // 3. If Demo URL
       if (demoUrl.trim()) {
         evidenceItems.push({
           evidence_type: 'demo',
           title: 'Live Project Demo',
           url: demoUrl.trim(),
-        });
-      }
-
-      // 4. Custom Link
-      if (customLinkUrl.trim()) {
-        evidenceItems.push({
-          evidence_type: 'link',
-          title: customLinkTitle.trim() || 'Reference Link',
-          url: customLinkUrl.trim(),
         });
       }
 
@@ -340,7 +424,6 @@ export const StudentTracker: React.FC = () => {
       );
       setTimeout(() => setSuccessNotice(''), 5000);
 
-      // Refresh logs
       const updatedLogs = await fetchInternshipDailyLogs(activeInternship.id);
       setDailyLogs(updatedLogs);
       setStats(calculateProgressStats(activeInternship, updatedLogs));
@@ -350,10 +433,19 @@ export const StudentTracker: React.FC = () => {
     }
   };
 
-  // Filter companies for search
   const filteredCompanies = registeredCompanies.filter((c) =>
     c.company_name.toLowerCase().includes(companySearchTerm.toLowerCase())
   );
+
+  // Filter tasks
+  const filteredTasks = tasks.filter((t) => {
+    if (taskFilter === 'all') return true;
+    if (taskFilter === 'pending') return ['not_started', 'in_progress', 'changes_requested'].includes(t.status);
+    if (taskFilter === 'completed') return t.status === 'completed';
+    if (taskFilter === 'submitted') return ['submitted', 'under_review'].includes(t.status);
+    if (taskFilter === 'overdue') return t.status === 'overdue';
+    return true;
+  });
 
   if (loading) {
     return (
@@ -363,7 +455,6 @@ export const StudentTracker: React.FC = () => {
     );
   }
 
-  // Check if internship is pending verification — block the tracker
   const isPendingVerification = activeInternship?.status === 'pending_verification';
 
   return (
@@ -373,25 +464,36 @@ export const StudentTracker: React.FC = () => {
         <div>
           <h1 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight flex items-center gap-2.5">
             <FileCheck className="w-7 h-7 text-white" />
-            Internship Tracker & Daily Work Log
+            Student Internship Tracker
           </h1>
           <p className="text-xs text-slate-400 mt-1">
-            Record daily engineering tasks, submit verifiable evidence, and track mentor review approvals.
+            Complete tasks assigned by your College / T&P and Company, submit verifiable evidence, and track institutional progress.
           </p>
         </div>
 
-        {activeInternship && !isPendingVerification && (
-          <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3">
+          {activeInternship && !isPendingVerification && (
+            <Button
+              variant="outline"
+              size="md"
+              onClick={() => handleOpenAddLog()}
+              icon={<Plus className="w-4 h-4" />}
+            >
+              + Log Today's Work
+            </Button>
+          )}
+
+          {!activeInternship && (
             <Button
               variant="primary"
               size="md"
-              onClick={() => handleOpenAddLog()}
+              onClick={handleOpenAddInternshipModal}
               icon={<Plus className="w-4 h-4 text-black" />}
             >
-              + Add Today's Work
+              + Add Internship Track
             </Button>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       {successNotice && (
@@ -433,48 +535,12 @@ export const StudentTracker: React.FC = () => {
               <Badge variant="warning">Pending Verification</Badge>
             </div>
           </div>
-
-          <p className="text-[11px] text-slate-500 pt-2">
-            Once the company verifies your internship, you'll be able to log daily work, attach evidence, and receive mentor reviews.
-          </p>
         </Card>
       )}
 
-      {/* Review Notices & Action Alerts */}
-      {stats && stats.changes_requested_logs > 0 && !isPendingVerification && (
-        <div className="p-4 rounded-xl bg-amber-950/70 border border-amber-800 text-amber-200 text-xs font-medium flex items-center justify-between gap-3 shadow-md">
-          <div className="flex items-center gap-2.5">
-            <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
-            <span>
-              Mentor requested updates on <strong>{stats.changes_requested_logs} work log(s)</strong>. Please review mentor feedback below and resubmit.
-            </span>
-          </div>
-        </div>
-      )}
-
-      {/* Main Internship Content or Empty State */}
-      {!activeInternship ? (
-        <Card className="p-12 text-center border-dashed space-y-4">
-          <div className="w-14 h-14 rounded-2xl bg-surface-border text-slate-300 flex items-center justify-center mx-auto shadow-inner">
-            <Briefcase className="w-7 h-7" />
-          </div>
-          <div>
-            <h2 className="text-lg font-bold text-white">Track Your Internship</h2>
-            <p className="text-xs text-slate-400 mt-1 max-w-md mx-auto leading-relaxed">
-              Select a company registered on AVUNK to start tracking your internship. The company will verify your internship before you can begin logging daily work.
-            </p>
-          </div>
-          <Button
-            variant="primary"
-            size="md"
-            onClick={handleOpenAddInternshipModal}
-            icon={<Plus className="w-4 h-4 text-black" />}
-          >
-            + Add Active Internship
-          </Button>
-        </Card>
-      ) : !isPendingVerification ? (
-        <div className="space-y-8">
+      {/* Main Internship Dashboard */}
+      {activeInternship && !isPendingVerification && (
+        <div className="space-y-6">
           {/* Internship Overview Banner */}
           <div className="p-6 rounded-2xl border border-slate-700 bg-gradient-to-r from-surface via-sidebar to-surface shadow-xl flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
             <div className="space-y-2">
@@ -483,20 +549,8 @@ export const StudentTracker: React.FC = () => {
                   <Building2 className="w-3.5 h-3.5 text-slate-400" />
                   {activeInternship.company_name}
                 </span>
-                <Badge
-                  variant={
-                    activeInternship.status === 'completed'
-                      ? 'success'
-                      : activeInternship.status === 'paused'
-                      ? 'warning'
-                      : 'info'
-                  }
-                >
-                  {activeInternship.status === 'completed'
-                    ? 'Completed Record'
-                    : activeInternship.status === 'paused'
-                    ? 'Paused'
-                    : 'Active Internship'}
+                <Badge variant={activeInternship.status === 'completed' ? 'success' : 'info'}>
+                  {activeInternship.status === 'completed' ? 'Completed Record' : 'Active Internship'}
                 </Badge>
               </div>
 
@@ -505,12 +559,7 @@ export const StudentTracker: React.FC = () => {
               <div className="flex flex-wrap items-center gap-4 text-xs text-slate-300 pt-1">
                 <span className="flex items-center gap-1.5">
                   <Calendar className="w-3.5 h-3.5 text-slate-400" />
-                  Start: {new Date(activeInternship.start_date).toLocaleDateString()}
-                </span>
-                <span>•</span>
-                <span className="flex items-center gap-1.5">
-                  <Calendar className="w-3.5 h-3.5 text-slate-400" />
-                  End: {new Date(activeInternship.end_date).toLocaleDateString()}
+                  {new Date(activeInternship.start_date).toLocaleDateString()} – {new Date(activeInternship.end_date).toLocaleDateString()}
                 </span>
                 {activeInternship.mentor_name && (
                   <>
@@ -523,284 +572,544 @@ export const StudentTracker: React.FC = () => {
               </div>
             </div>
 
-            {/* Days Counter */}
-            <div className="flex md:flex-col items-end justify-between md:justify-center border-t md:border-t-0 md:border-l border-surface-border pt-4 md:pt-0 md:pl-6 shrink-0 w-full md:w-auto">
+            {/* Calculated Task Progress Meter */}
+            <div className="flex flex-col items-end justify-center border-t md:border-t-0 md:border-l border-surface-border pt-4 md:pt-0 md:pl-6 shrink-0 w-full md:w-auto">
               <div className="text-right">
-                <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Days Completed</span>
+                <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Overall Progress</span>
                 <p className="text-3xl font-black text-white">
-                  {stats?.days_completed || 0}
-                  <span className="text-sm font-normal text-slate-500"> / {activeInternship.total_days} days</span>
+                  {taskStats && taskStats.has_tasks ? `${taskStats.progress_percent}%` : stats?.days_completed ? `${Math.round((stats.days_completed / activeInternship.total_days) * 100)}%` : 'No tasks'}
                 </p>
               </div>
               <span className="text-[11px] text-slate-400 mt-0.5">
-                {stats?.days_remaining || 0} days remaining
+                {taskStats && taskStats.has_tasks
+                  ? `${taskStats.completed_tasks} of ${taskStats.total_tasks} tasks completed`
+                  : `${stats?.days_completed || 0} / ${activeInternship.total_days} days recorded`}
               </span>
             </div>
           </div>
 
-          {/* Internship Activity & Progress Section */}
-          {stats && (
-            <Card className="p-6 space-y-6 bg-surface border-surface-border shadow-md">
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 border-b border-surface-border pb-3">
-                <h3 className="text-sm font-bold uppercase tracking-wider text-white flex items-center gap-2">
-                  <Award className="w-4 h-4 text-amber-400" />
-                  Internship Activity & Verification Stats
-                </h3>
-                <span className="text-[11px] text-slate-400">
-                  Measures recorded + submitted + reviewed progress
-                </span>
+          {/* Metric Summary Cards */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <Card className="p-4 bg-surface border-surface-border">
+              <span className="text-[10px] text-slate-400 uppercase font-bold block">Assigned Tasks</span>
+              <span className="text-2xl font-black text-white mt-1 block">{taskStats?.total_tasks || 0}</span>
+              <span className="text-[10px] text-slate-500">From T&P and Company</span>
+            </Card>
+
+            <Card className="p-4 bg-surface border-surface-border">
+              <span className="text-[10px] text-emerald-400 uppercase font-bold block">Completed</span>
+              <span className="text-2xl font-black text-emerald-400 mt-1 block">{taskStats?.completed_tasks || 0}</span>
+              <span className="text-[10px] text-slate-500">Verified & Approved</span>
+            </Card>
+
+            <Card className="p-4 bg-surface border-surface-border">
+              <span className="text-[10px] text-amber-400 uppercase font-bold block">Pending / In Progress</span>
+              <span className="text-2xl font-black text-amber-400 mt-1 block">{taskStats?.pending_tasks || 0}</span>
+              <span className="text-[10px] text-slate-500">Awaiting submission</span>
+            </Card>
+
+            <Card className="p-4 bg-surface border-surface-border">
+              <span className="text-[10px] text-rose-400 uppercase font-bold block">Overdue</span>
+              <span className="text-2xl font-black text-rose-400 mt-1 block">{taskStats?.overdue_tasks || 0}</span>
+              <span className="text-[10px] text-slate-500">Past deadline</span>
+            </Card>
+          </div>
+
+          {/* Navigation Tabs */}
+          <div className="flex border-b border-surface-border gap-6">
+            <button
+              onClick={() => setActiveTab('tasks')}
+              className={`pb-3 text-xs font-bold transition-all border-b-2 flex items-center gap-2 ${
+                activeTab === 'tasks'
+                  ? 'border-white text-white'
+                  : 'border-transparent text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <ListTodo className="w-3.5 h-3.5" />
+              My Tasks ({tasks.length})
+            </button>
+
+            <button
+              onClick={() => setActiveTab('logs')}
+              className={`pb-3 text-xs font-bold transition-all border-b-2 flex items-center gap-2 ${
+                activeTab === 'logs'
+                  ? 'border-white text-white'
+                  : 'border-transparent text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Clock className="w-3.5 h-3.5" />
+              Daily Work Logs ({dailyLogs.length})
+            </button>
+
+            <button
+              onClick={() => setActiveTab('attendance')}
+              className={`pb-3 text-xs font-bold transition-all border-b-2 flex items-center gap-2 ${
+                activeTab === 'attendance'
+                  ? 'border-white text-white'
+                  : 'border-transparent text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <UserCheck className="w-3.5 h-3.5" />
+              Attendance {attendanceStats?.enabled ? `(${attendanceStats.attendance_rate_percent}%)` : '(Optional)'}
+            </button>
+          </div>
+
+          {/* TAB 1: MY ASSIGNED TASKS */}
+          {activeTab === 'tasks' && (
+            <div className="space-y-4">
+              {/* Task Filter */}
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex gap-1.5 flex-wrap">
+                  {[
+                    { id: 'all', label: `All (${tasks.length})` },
+                    { id: 'pending', label: `Pending (${taskStats?.pending_tasks || 0})` },
+                    { id: 'submitted', label: `Under Review (${taskStats?.under_review_tasks || 0})` },
+                    { id: 'completed', label: `Completed (${taskStats?.completed_tasks || 0})` },
+                    { id: 'overdue', label: `Overdue (${taskStats?.overdue_tasks || 0})` },
+                  ].map((tab) => (
+                    <button
+                      key={tab.id}
+                      onClick={() => setTaskFilter(tab.id)}
+                      className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all border ${
+                        taskFilter === tab.id
+                          ? 'bg-white text-black border-white'
+                          : 'bg-surface-border text-slate-400 border-slate-700 hover:text-white'
+                      }`}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
               </div>
 
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-                <div className="bg-background p-4 rounded-xl border border-surface-border">
-                  <span className="text-[10px] text-slate-400 uppercase font-bold block">Total Work Logs</span>
-                  <span className="text-2xl font-black text-white mt-1 block">{stats.total_logs}</span>
-                  <span className="text-[10px] text-slate-500">{stats.total_hours_worked} total hours</span>
+              {filteredTasks.length === 0 ? (
+                <Card className="p-12 text-center border-dashed space-y-3">
+                  <ListTodo className="w-8 h-8 text-slate-600 mx-auto" />
+                  <h3 className="text-sm font-bold text-white">No tasks found</h3>
+                  <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                    {tasks.length === 0
+                      ? 'Your College / T&P Department or Company has not assigned any internship tasks yet.'
+                      : 'No tasks match the selected filter.'}
+                  </p>
+                </Card>
+              ) : (
+                <div className="space-y-3">
+                  {filteredTasks.map((task) => {
+                    const isCompleted = task.status === 'completed';
+                    const isOverdue = task.status === 'overdue';
+                    const isChangesReq = task.status === 'changes_requested';
+                    const isSubmitted = task.status === 'submitted' || task.status === 'under_review';
+
+                    return (
+                      <Card
+                        key={task.id}
+                        className={`p-5 transition-all border ${
+                          isCompleted
+                            ? 'border-emerald-900/40 bg-emerald-950/10'
+                            : isChangesReq
+                            ? 'border-amber-800 bg-amber-950/20'
+                            : isOverdue
+                            ? 'border-rose-900/60 bg-rose-950/10'
+                            : 'border-surface-border bg-surface'
+                        }`}
+                      >
+                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                          <div className="space-y-1.5 flex-1">
+                            <div className="flex items-center gap-2.5 flex-wrap">
+                              <h4 className="text-base font-bold text-white">{task.title}</h4>
+
+                              {/* Task Source Badge */}
+                              <span className="text-[10px] px-2 py-0.5 rounded font-bold bg-indigo-950/80 border border-indigo-800 text-indigo-300 flex items-center gap-1">
+                                <Building2 className="w-3 h-3 text-indigo-400" />
+                                {task.task_source}
+                              </span>
+
+                              {/* Priority Badge */}
+                              <span className={`text-[10px] px-2 py-0.5 rounded font-bold uppercase ${
+                                task.priority === 'high'
+                                  ? 'bg-rose-950 text-rose-300 border border-rose-800'
+                                  : task.priority === 'medium'
+                                  ? 'bg-amber-950 text-amber-300 border border-amber-800'
+                                  : 'bg-slate-800 text-slate-300'
+                              }`}>
+                                {task.priority} Priority
+                              </span>
+
+                              {/* Status Badge */}
+                              <Badge
+                                variant={
+                                  isCompleted
+                                    ? 'success'
+                                    : isChangesReq
+                                    ? 'warning'
+                                    : isOverdue
+                                    ? 'danger'
+                                    : isSubmitted
+                                    ? 'info'
+                                    : 'default'
+                                }
+                              >
+                                {isCompleted
+                                  ? '✓ Completed'
+                                  : isChangesReq
+                                  ? '⚠ Changes Requested'
+                                  : isOverdue
+                                  ? '⌛ Overdue'
+                                  : isSubmitted
+                                  ? '● Submitted (Under Review)'
+                                  : '● Pending'}
+                              </Badge>
+                            </div>
+
+                            <p className="text-xs text-slate-300 leading-relaxed line-clamp-2">
+                              {task.description}
+                            </p>
+
+                            <div className="flex items-center gap-4 text-[11px] text-slate-400 pt-1 flex-wrap">
+                              <span className="flex items-center gap-1">
+                                <Calendar className="w-3 h-3 text-slate-500" />
+                                Deadline: <strong className={isOverdue ? 'text-rose-400' : 'text-slate-300'}>{new Date(task.deadline).toLocaleDateString()}</strong>
+                              </span>
+
+                              {task.submission_required && (
+                                <span className="flex items-center gap-1 text-slate-400">
+                                  <FileCheck className="w-3 h-3 text-slate-500" />
+                                  Requires: <strong className="text-slate-300 uppercase">{task.submission_type}</strong>
+                                </span>
+                              )}
+                            </div>
+
+                            {/* Reviewer Feedback Notice if Changes Requested */}
+                            {isChangesReq && task.submissions && task.submissions.length > 0 && task.submissions[0].review_comment && (
+                              <div className="mt-2 p-2.5 rounded-lg bg-amber-950/50 border border-amber-800 text-amber-200 text-xs">
+                                <strong>Feedback from {task.submissions[0].reviewer_name || 'Reviewer'}:</strong> "{task.submissions[0].review_comment}"
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Action Button */}
+                          <div className="flex items-center gap-2 shrink-0 self-end md:self-center">
+                            {isCompleted ? (
+                              <span className="text-xs font-semibold text-emerald-400 flex items-center gap-1">
+                                <Check className="w-4 h-4" /> Verified
+                              </span>
+                            ) : (
+                              <Button
+                                variant={isChangesReq ? 'secondary' : 'primary'}
+                                size="sm"
+                                onClick={() => handleOpenSubmitTask(task)}
+                                icon={<Send className="w-3.5 h-3.5" />}
+                              >
+                                {isChangesReq ? 'Resubmit Work' : isSubmitted ? 'Update Submission' : 'Submit Task Work'}
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      </Card>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* TAB 2: DAILY WORK LOGS */}
+          {activeTab === 'logs' && (
+            <div className="space-y-4">
+              <div className="flex justify-between items-center border-b border-surface-border pb-3">
+                <div>
+                  <h3 className="text-base font-bold text-white flex items-center gap-2">
+                    <Clock className="w-4 h-4 text-slate-400" />
+                    Daily Work Log Timeline ({dailyLogs.length})
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Record your daily tasks, hours worked, and deliverables for mentor reviews.
+                  </p>
                 </div>
 
-                <div className="bg-background p-4 rounded-xl border border-surface-border">
-                  <span className="text-[10px] text-emerald-400 uppercase font-bold block">Approved Logs</span>
-                  <span className="text-2xl font-black text-emerald-400 mt-1 block">{stats.approved_logs}</span>
-                  <span className="text-[10px] text-slate-500">Verified by mentor</span>
-                </div>
-
-                <div className="bg-background p-4 rounded-xl border border-surface-border">
-                  <span className="text-[10px] text-amber-400 uppercase font-bold block">Pending Review</span>
-                  <span className="text-2xl font-black text-amber-400 mt-1 block">{stats.pending_logs}</span>
-                  <span className="text-[10px] text-slate-500">Awaiting feedback</span>
-                </div>
-
-                <div className="bg-background p-4 rounded-xl border border-surface-border">
-                  <span className="text-[10px] text-rose-400 uppercase font-bold block">Action Required</span>
-                  <span className="text-2xl font-black text-rose-400 mt-1 block">{stats.changes_requested_logs}</span>
-                  <span className="text-[10px] text-slate-500">Updates requested</span>
-                </div>
-
-                <div className="bg-background p-4 rounded-xl border border-surface-border col-span-2 md:col-span-1">
-                  <span className="text-[10px] text-slate-400 uppercase font-bold block">Evidence Items</span>
-                  <span className="text-2xl font-black text-white mt-1 block">{stats.evidence_submitted_count}</span>
-                  <span className="text-[10px] text-slate-500">Proofs attached</span>
-                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleOpenAddLog()}
+                  icon={<Plus className="w-3.5 h-3.5" />}
+                >
+                  + Add Today's Log
+                </Button>
               </div>
 
-              {/* Activity Consistency Progress Bar */}
-              <div className="space-y-2 pt-2">
-                <div className="flex justify-between items-center text-xs">
-                  <span className="font-bold text-slate-300">Activity Consistency</span>
-                  <span className="font-mono font-bold text-emerald-400">
-                    {stats.activity_consistency_percent}%
-                  </span>
+              {dailyLogs.length === 0 ? (
+                <Card className="p-10 text-center border-dashed space-y-3">
+                  <Clock className="w-8 h-8 text-slate-600 mx-auto" />
+                  <p className="text-sm font-bold text-white">No daily logs recorded yet</p>
+                  <Button variant="primary" size="sm" onClick={() => handleOpenAddLog()}>
+                    + Add Today's Work
+                  </Button>
+                </Card>
+              ) : (
+                <div className="space-y-3">
+                  {dailyLogs.map((log) => {
+                    const isExpanded = expandedLogId === log.id;
+
+                    return (
+                      <Card key={log.id} className="p-5 bg-surface border-surface-border space-y-3">
+                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                          <div className="flex items-start gap-3">
+                            <div className="w-11 h-11 rounded-xl bg-surface-border text-white text-xs font-black flex flex-col items-center justify-center shrink-0 border border-slate-700">
+                              <span>{new Date(log.log_date).getDate()}</span>
+                              <span className="text-[9px] uppercase font-bold text-slate-400">
+                                {new Date(log.log_date).toLocaleString('default', { month: 'short' })}
+                              </span>
+                            </div>
+
+                            <div>
+                              <div className="flex items-center gap-2.5 flex-wrap">
+                                <h4 className="text-sm font-bold text-white">{log.title}</h4>
+                                <span className="text-xs px-2 py-0.5 rounded bg-black/40 text-slate-300 font-mono">
+                                  {log.hours_worked} hrs
+                                </span>
+                                <Badge variant={log.status === 'approved' ? 'success' : log.status === 'changes_requested' ? 'warning' : 'info'}>
+                                  {log.status === 'approved' ? '✓ Approved' : log.status === 'changes_requested' ? '⚠ Changes Requested' : '● Pending'}
+                                </Badge>
+                              </div>
+                              <p className="text-xs text-slate-400 mt-1 line-clamp-2">{log.description}</p>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2 shrink-0">
+                            {log.status === 'changes_requested' && (
+                              <Button variant="primary" size="sm" onClick={() => handleOpenAddLog(log)}>
+                                Update & Resubmit
+                              </Button>
+                            )}
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setExpandedLogId(isExpanded ? null : log.id)}
+                              icon={isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                            >
+                              {isExpanded ? 'Hide' : 'Details'}
+                            </Button>
+                          </div>
+                        </div>
+
+                        {isExpanded && (
+                          <div className="pt-3 border-t border-surface-border space-y-3 text-xs">
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                              <div className="p-3 bg-background rounded-lg border border-surface-border">
+                                <span className="font-bold text-slate-300 block mb-1">Tasks Completed:</span>
+                                <p className="text-slate-300 whitespace-pre-line">{log.tasks_completed || log.description}</p>
+                              </div>
+                              <div className="p-3 bg-background rounded-lg border border-surface-border">
+                                <span className="font-bold text-emerald-400 block mb-1">Learnings:</span>
+                                <p className="text-slate-300 whitespace-pre-line">{log.learnings || 'Applied technical problem solving.'}</p>
+                              </div>
+                              <div className="p-3 bg-background rounded-lg border border-surface-border">
+                                <span className="font-bold text-amber-400 block mb-1">Blockers:</span>
+                                <p className="text-slate-300 whitespace-pre-line">{log.blockers || 'None.'}</p>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </Card>
+                    );
+                  })}
                 </div>
-                <div className="w-full bg-surface-border h-3 rounded-full overflow-hidden flex">
-                  <div
-                    className="bg-emerald-500 h-full rounded-full transition-all duration-500"
-                    style={{ width: `${stats.activity_consistency_percent}%` }}
+              )}
+            </div>
+          )}
+
+          {/* TAB 3: ATTENDANCE (OPTIONAL) */}
+          {activeTab === 'attendance' && (
+            <div className="space-y-4">
+              {!attendanceStats?.enabled ? (
+                <Card className="p-10 text-center border-dashed space-y-3">
+                  <UserCheck className="w-8 h-8 text-slate-600 mx-auto" />
+                  <h3 className="text-sm font-bold text-white">Attendance tracking is not enabled</h3>
+                  <p className="text-xs text-slate-400 max-w-md mx-auto">
+                    Your employer has not recorded any attendance logs yet. Attendance is optional and enabled directly by your company mentor.
+                  </p>
+                </Card>
+              ) : (
+                <div className="space-y-4">
+                  {/* Attendance Stats Cards */}
+                  <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                    <Card className="p-4 bg-surface border-surface-border text-center">
+                      <span className="text-[10px] text-slate-400 uppercase font-bold block">Attendance Rate</span>
+                      <span className="text-2xl font-black text-emerald-400 mt-1 block">{attendanceStats.attendance_rate_percent}%</span>
+                    </Card>
+                    <Card className="p-4 bg-surface border-surface-border text-center">
+                      <span className="text-[10px] text-emerald-400 uppercase font-bold block">Present</span>
+                      <span className="text-2xl font-black text-white mt-1 block">{attendanceStats.present_days} days</span>
+                    </Card>
+                    <Card className="p-4 bg-surface border-surface-border text-center">
+                      <span className="text-[10px] text-rose-400 uppercase font-bold block">Absent</span>
+                      <span className="text-2xl font-black text-white mt-1 block">{attendanceStats.absent_days} days</span>
+                    </Card>
+                    <Card className="p-4 bg-surface border-surface-border text-center">
+                      <span className="text-[10px] text-amber-400 uppercase font-bold block">Half Day</span>
+                      <span className="text-2xl font-black text-white mt-1 block">{attendanceStats.half_days} days</span>
+                    </Card>
+                    <Card className="p-4 bg-surface border-surface-border text-center">
+                      <span className="text-[10px] text-indigo-400 uppercase font-bold block">Approved Leave</span>
+                      <span className="text-2xl font-black text-white mt-1 block">{attendanceStats.leave_days} days</span>
+                    </Card>
+                  </div>
+
+                  {/* Attendance History List */}
+                  <div className="space-y-2">
+                    {attendanceRecords.map((rec) => (
+                      <div
+                        key={rec.id}
+                        className="p-3 bg-surface rounded-xl border border-surface-border flex justify-between items-center text-xs"
+                      >
+                        <span className="font-semibold text-white">
+                          {new Date(rec.date).toLocaleDateString('en-US', {
+                            weekday: 'short',
+                            month: 'short',
+                            day: 'numeric',
+                            year: 'numeric',
+                          })}
+                        </span>
+                        <Badge
+                          variant={
+                            rec.status === 'present'
+                              ? 'success'
+                              : rec.status === 'absent'
+                              ? 'danger'
+                              : rec.status === 'half_day'
+                              ? 'warning'
+                              : 'info'
+                          }
+                        >
+                          ● {rec.status.toUpperCase()}
+                        </Badge>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Task Submission Modal */}
+      {showTaskSubmitModal && selectedTask && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto antialiased">
+          <div className="bg-surface border border-surface-border rounded-2xl max-w-xl w-full p-6 space-y-5 my-8 shadow-2xl">
+            <div className="flex justify-between items-center border-b border-surface-border pb-3">
+              <div>
+                <h3 className="text-lg font-bold text-white">Submit Work for Task</h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  {selectedTask.title} • Assigned by {selectedTask.task_source}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowTaskSubmitModal(false)}
+                className="text-slate-400 hover:text-white"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Task Instructions */}
+            <div className="p-3.5 bg-background rounded-xl border border-surface-border space-y-2 text-xs">
+              <div className="flex justify-between items-center">
+                <span className="font-bold text-slate-300">Task Description:</span>
+                <span className="text-[10px] text-slate-400">Deadline: {new Date(selectedTask.deadline).toLocaleDateString()}</span>
+              </div>
+              <p className="text-slate-300 leading-relaxed">{selectedTask.description}</p>
+              {selectedTask.instructions && (
+                <div className="pt-2 border-t border-surface-border">
+                  <span className="font-bold text-amber-400 block mb-1">Instructions:</span>
+                  <p className="text-slate-300 leading-relaxed">{selectedTask.instructions}</p>
+                </div>
+              )}
+            </div>
+
+            {formError && (
+              <div className="p-3 bg-rose-950/80 border border-rose-800 text-rose-300 text-xs rounded-xl">
+                {formError}
+              </div>
+            )}
+
+            <form onSubmit={handleSubmitTaskDeliverable} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  Written Response / Explanation
+                </label>
+                <textarea
+                  rows={3}
+                  value={taskSubmissionText}
+                  onChange={(e) => setTaskSubmissionText(e.target.value)}
+                  placeholder="Describe your implementation, tests performed, or deliverables completed..."
+                  className="w-full px-3 py-2 bg-background border border-surface-border rounded-lg text-xs text-white focus:outline-none focus:border-slate-400"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] text-slate-400 mb-1 flex items-center gap-1">
+                    <Code2 className="w-3.5 h-3.5" /> GitHub Commit / PR URL
+                  </label>
+                  <input
+                    type="url"
+                    value={taskGithubUrl}
+                    onChange={(e) => setTaskGithubUrl(e.target.value)}
+                    placeholder="https://github.com/..."
+                    className="w-full px-3 py-2 bg-background border border-surface-border rounded-lg text-xs text-white focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] text-slate-400 mb-1 flex items-center gap-1">
+                    <Globe className="w-3.5 h-3.5" /> Live Demo / Deployed URL
+                  </label>
+                  <input
+                    type="url"
+                    value={taskDemoUrl}
+                    onChange={(e) => setTaskDemoUrl(e.target.value)}
+                    placeholder="https://..."
+                    className="w-full px-3 py-2 bg-background border border-surface-border rounded-lg text-xs text-white focus:outline-none"
                   />
                 </div>
               </div>
-            </Card>
-          )}
 
-          {/* Daily Work Logs Timeline Feed */}
-          <div className="space-y-4">
-            <div className="flex justify-between items-center border-b border-surface-border pb-3">
               <div>
-                <h3 className="text-lg font-bold text-white tracking-tight flex items-center gap-2">
-                  <Clock className="w-4 h-4 text-slate-400" />
-                  Work Log Timeline ({dailyLogs.length})
-                </h3>
-                <p className="text-xs text-slate-400 mt-0.5">
-                  Daily recorded deliverables with proof of work and supervisor reviews.
-                </p>
+                <label className="block text-[11px] text-slate-400 mb-1 flex items-center gap-1">
+                  <Upload className="w-3.5 h-3.5" /> File Upload / Screenshot Evidence
+                </label>
+                <input
+                  type="file"
+                  onChange={(e) => setTaskFile(e.target.files?.[0] || null)}
+                  className="w-full text-xs text-slate-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-surface-border file:text-white hover:file:bg-slate-700 cursor-pointer"
+                />
               </div>
 
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => handleOpenAddLog()}
-                icon={<Plus className="w-3.5 h-3.5" />}
-              >
-                Log Today's Work
-              </Button>
-            </div>
-
-            {dailyLogs.length === 0 ? (
-              <Card className="p-10 text-center border-dashed space-y-3">
-                <Clock className="w-8 h-8 text-slate-600 mx-auto" />
-                <p className="text-sm font-bold text-white">No daily logs recorded yet</p>
-                <p className="text-xs text-slate-400 max-w-sm mx-auto">
-                  Click "+ Add Today's Work" above to document your tasks, learnings, and attach screenshots or GitHub commits.
-                </p>
-                <Button variant="primary" size="sm" onClick={() => handleOpenAddLog()}>
-                  + Add Today's Work
+              <div className="flex justify-end gap-3 pt-3 border-t border-surface-border">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="md"
+                  onClick={() => setShowTaskSubmitModal(false)}
+                >
+                  Cancel
                 </Button>
-              </Card>
-            ) : (
-              <div className="space-y-4">
-                {dailyLogs.map((log) => {
-                  const isExpanded = expandedLogId === log.id;
-
-                  return (
-                    <Card
-                      key={log.id}
-                      className={`p-5 transition-all border ${
-                        log.status === 'approved'
-                          ? 'border-emerald-900/40 bg-emerald-950/10'
-                          : log.status === 'changes_requested'
-                          ? 'border-amber-800 bg-amber-950/20'
-                          : log.status === 'rejected'
-                          ? 'border-rose-800 bg-rose-950/20'
-                          : 'border-surface-border bg-surface'
-                      }`}
-                    >
-                      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-                        <div className="flex items-start md:items-center gap-3">
-                          <div className="w-12 h-12 rounded-xl bg-surface-border text-white text-xs font-black flex flex-col items-center justify-center shrink-0 border border-slate-700">
-                            <span>{new Date(log.log_date).getDate()}</span>
-                            <span className="text-[9px] uppercase font-bold text-slate-400">
-                              {new Date(log.log_date).toLocaleString('default', { month: 'short' })}
-                            </span>
-                          </div>
-
-                          <div>
-                            <div className="flex items-center gap-2.5 flex-wrap">
-                              <h4 className="text-base font-bold text-white">{log.title}</h4>
-                              <span className="text-xs px-2 py-0.5 rounded bg-black/40 text-slate-300 font-mono">
-                                {log.hours_worked} hrs
-                              </span>
-                              <Badge
-                                variant={
-                                  log.status === 'approved'
-                                    ? 'success'
-                                    : log.status === 'changes_requested'
-                                    ? 'warning'
-                                    : log.status === 'rejected'
-                                    ? 'danger'
-                                    : 'info'
-                                }
-                              >
-                                {log.status === 'approved'
-                                  ? '✓ Approved'
-                                  : log.status === 'changes_requested'
-                                  ? '⚠ Changes Requested'
-                                  : log.status === 'rejected'
-                                  ? '✕ Rejected'
-                                  : '● Pending Review'}
-                              </Badge>
-                            </div>
-                            <p className="text-xs text-slate-400 mt-1 line-clamp-2 leading-relaxed">
-                              {log.description}
-                            </p>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-2 shrink-0 self-end md:self-auto">
-                          {log.status === 'changes_requested' && (
-                            <Button
-                              variant="primary"
-                              size="sm"
-                              onClick={() => handleOpenAddLog(log)}
-                            >
-                              Update & Resubmit
-                            </Button>
-                          )}
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => setExpandedLogId(isExpanded ? null : log.id)}
-                            icon={isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                          >
-                            {isExpanded ? 'Hide Details' : 'View Details'}
-                          </Button>
-                        </div>
-                      </div>
-
-                      {/* Expandable Log Detail Drawer */}
-                      {isExpanded && (
-                        <div className="mt-5 pt-5 border-t border-surface-border space-y-4 text-xs">
-                          {/* Full description & breakdown */}
-                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                            <div className="p-3.5 bg-background rounded-xl border border-surface-border">
-                              <span className="font-bold text-slate-300 block mb-1">Tasks Completed:</span>
-                              <p className="text-slate-300 leading-relaxed whitespace-pre-line">
-                                {log.tasks_completed || log.description}
-                              </p>
-                            </div>
-
-                            <div className="p-3.5 bg-background rounded-xl border border-surface-border">
-                              <span className="font-bold text-emerald-400 block mb-1">What I Learned:</span>
-                              <p className="text-slate-300 leading-relaxed whitespace-pre-line">
-                                {log.learnings || 'Daily applied engineering problem solving.'}
-                              </p>
-                            </div>
-
-                            <div className="p-3.5 bg-background rounded-xl border border-surface-border">
-                              <span className="font-bold text-amber-400 block mb-1">Blockers / Challenges:</span>
-                              <p className="text-slate-300 leading-relaxed whitespace-pre-line">
-                                {log.blockers || 'None encountered.'}
-                              </p>
-                            </div>
-                          </div>
-
-                          {/* Evidence Attachments */}
-                          {log.evidence && log.evidence.length > 0 && (
-                            <div className="space-y-2 pt-1">
-                              <span className="text-[11px] uppercase font-bold text-slate-400 tracking-wider block">
-                                Attached Evidence ({log.evidence.length})
-                              </span>
-                              <div className="flex flex-wrap gap-2">
-                                {log.evidence.map((ev) => (
-                                  <a
-                                    key={ev.id}
-                                    href={ev.url || ev.file_url || '#'}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="px-3 py-1.5 bg-background hover:bg-slate-800 text-slate-200 rounded-lg border border-surface-border flex items-center gap-2 transition-colors"
-                                  >
-                                    {ev.evidence_type === 'github' ? (
-                                      <Code2 className="w-3.5 h-3.5 text-slate-300" />
-                                    ) : ev.evidence_type === 'demo' ? (
-                                      <Globe className="w-3.5 h-3.5 text-emerald-400" />
-                                    ) : (
-                                      <FileText className="w-3.5 h-3.5 text-indigo-400" />
-                                    )}
-                                    <span className="font-medium text-xs truncate max-w-[200px]">
-                                      {ev.title || ev.file_name || 'Evidence Link'}
-                                    </span>
-                                    <ExternalLink className="w-3 h-3 text-slate-500" />
-                                  </a>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Mentor Review Feedback */}
-                          {log.mentor_reviews && log.mentor_reviews.length > 0 && (
-                            <div className="p-4 rounded-xl bg-surface border border-slate-700 space-y-2">
-                              <div className="flex items-center justify-between">
-                                <span className="font-bold text-white flex items-center gap-1.5">
-                                  <MessageSquare className="w-3.5 h-3.5 text-amber-400" />
-                                  Mentor Review Feedback
-                                </span>
-                                <span className="text-[10px] text-slate-400">
-                                  {new Date(log.mentor_reviews[0].created_at).toLocaleDateString()}
-                                </span>
-                              </div>
-                              <p className="text-xs text-slate-300 leading-relaxed italic bg-background p-2.5 rounded-lg border border-surface-border">
-                                "{log.mentor_reviews[0].comment}"
-                              </p>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </Card>
-                  );
-                })}
+                <Button
+                  type="submit"
+                  variant="primary"
+                  size="md"
+                  loading={submittingTask}
+                  icon={<Send className="w-4 h-4 text-black" />}
+                >
+                  Submit Task for Verification
+                </Button>
               </div>
-            )}
+            </form>
           </div>
         </div>
-      ) : null}
+      )}
 
       {/* Add / Edit Daily Log Modal */}
       {showAddLogModal && (
@@ -976,7 +1285,7 @@ export const StudentTracker: React.FC = () => {
         </div>
       )}
 
-      {/* Add Internship Modal — Company Dropdown from AVUNK DB */}
+      {/* Add Internship Modal */}
       {showAddInternshipModal && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto antialiased">
           <div className="bg-surface border border-surface-border rounded-2xl max-w-lg w-full p-6 space-y-5 shadow-2xl">
@@ -984,7 +1293,7 @@ export const StudentTracker: React.FC = () => {
               <div>
                 <h3 className="text-lg font-bold text-white">+ Add Internship Track</h3>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  Only companies registered on AVUNK are listed. The company must verify your internship.
+                  Select from registered AVUNK companies or enter your company name.
                 </p>
               </div>
               <button
@@ -1003,7 +1312,6 @@ export const StudentTracker: React.FC = () => {
             )}
 
             <form onSubmit={handleCreateInternship} className="space-y-4">
-              {/* Company Selection Mode Toggle */}
               <div className="space-y-2">
                 <div className="flex justify-between items-center">
                   <label className="block text-xs font-semibold text-slate-300">
@@ -1019,7 +1327,7 @@ export const StudentTracker: React.FC = () => {
                           : 'text-slate-400 hover:text-white'
                       }`}
                     >
-                      Choose Directory ({registeredCompanies.length})
+                      Directory ({registeredCompanies.length})
                     </button>
                     <button
                       type="button"
@@ -1040,38 +1348,32 @@ export const StudentTracker: React.FC = () => {
 
                 {companyInputMode === 'registered' ? (
                   <div className="space-y-2">
-                    {/* Search Filter */}
                     <div className="relative">
                       <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500" />
                       <input
                         type="text"
                         value={companySearchTerm}
                         onChange={(e) => setCompanySearchTerm(e.target.value)}
-                        placeholder="Search company name or industry..."
-                        className="w-full pl-9 pr-3 py-2 bg-background border border-surface-border rounded-lg text-xs text-white focus:outline-none focus:border-slate-400"
+                        placeholder="Search company..."
+                        className="w-full pl-9 pr-3 py-2 bg-background border border-surface-border rounded-lg text-xs text-white focus:outline-none"
                       />
                     </div>
 
-                    {/* Company List */}
                     <div className="max-h-40 overflow-y-auto border border-surface-border rounded-xl bg-background divide-y divide-surface-border/40">
                       {loadingCompanies ? (
                         <div className="p-4 text-center text-xs text-slate-400 flex items-center justify-center gap-2">
                           <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          <span>Loading companies from AVUNK database...</span>
+                          <span>Loading companies...</span>
                         </div>
                       ) : filteredCompanies.length === 0 ? (
                         <div className="p-4 text-center space-y-1.5">
-                          <p className="text-xs text-slate-400">
-                            {registeredCompanies.length === 0
-                              ? 'No companies registered yet.'
-                              : 'No matching company found in directory.'}
-                          </p>
+                          <p className="text-xs text-slate-400">No companies found in directory.</p>
                           <button
                             type="button"
                             onClick={() => setCompanyInputMode('custom')}
                             className="text-[11px] text-emerald-400 underline font-semibold"
                           >
-                            Click here to type your company name directly
+                            Click to enter company directly
                           </button>
                         </div>
                       ) : (
@@ -1089,7 +1391,7 @@ export const StudentTracker: React.FC = () => {
                                 : 'hover:bg-surface-hover text-white'
                             }`}
                           >
-                            <Building2 className={`w-4 h-4 shrink-0 ${selectedCompanyId === company.id ? 'text-emerald-400' : 'text-slate-500'}`} />
+                            <Building2 className="w-4 h-4 text-slate-400 shrink-0" />
                             <div className="min-w-0 flex-1">
                               <span className="text-xs font-semibold block truncate">{company.company_name}</span>
                               {company.industry && (
@@ -1107,7 +1409,7 @@ export const StudentTracker: React.FC = () => {
                     {selectedCompanyName && (
                       <div className="text-xs text-emerald-400 flex items-center gap-1.5 pt-1">
                         <CheckCircle2 className="w-3.5 h-3.5" />
-                        Selected Company: <strong>{selectedCompanyName}</strong>
+                        Selected: <strong>{selectedCompanyName}</strong>
                       </div>
                     )}
                   </div>
@@ -1118,12 +1420,9 @@ export const StudentTracker: React.FC = () => {
                       value={selectedCompanyName}
                       onChange={(e) => setSelectedCompanyName(e.target.value)}
                       placeholder="e.g. Apex Systems Labs / Google / Microsoft"
-                      className="w-full px-3 py-2 bg-background border border-surface-border rounded-lg text-xs text-white focus:outline-none focus:border-slate-400"
+                      className="w-full px-3 py-2 bg-background border border-surface-border rounded-lg text-xs text-white focus:outline-none"
                       required
                     />
-                    <p className="text-[10px] text-slate-500 mt-1">
-                      Your employer can log in or register on AVUNK to verify your internship and review daily work.
-                    </p>
                   </div>
                 )}
               </div>
@@ -1135,7 +1434,7 @@ export const StudentTracker: React.FC = () => {
                   value={newRole}
                   onChange={(e) => setNewRole(e.target.value)}
                   placeholder="e.g. Full Stack Developer Intern"
-                  className="w-full px-3 py-2 bg-background border border-surface-border rounded-lg text-xs text-white focus:outline-none focus:border-slate-400"
+                  className="w-full px-3 py-2 bg-background border border-surface-border rounded-lg text-xs text-white focus:outline-none"
                   required
                 />
               </div>
@@ -1163,42 +1462,6 @@ export const StudentTracker: React.FC = () => {
                 </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">Duration (Total Days)</label>
-                <input
-                  type="number"
-                  min="5"
-                  max="365"
-                  value={newTotalDays}
-                  onChange={(e) => setNewTotalDays(Number(e.target.value))}
-                  className="w-full px-3 py-2 bg-background border border-surface-border rounded-lg text-xs text-white focus:outline-none"
-                  required
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">Mentor Name (Optional)</label>
-                  <input
-                    type="text"
-                    value={newMentorName}
-                    onChange={(e) => setNewMentorName(e.target.value)}
-                    placeholder="e.g. John Doe"
-                    className="w-full px-3 py-2 bg-background border border-surface-border rounded-lg text-xs text-white focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">Mentor Email (Optional)</label>
-                  <input
-                    type="email"
-                    value={newMentorEmail}
-                    onChange={(e) => setNewMentorEmail(e.target.value)}
-                    placeholder="mentor@company.com"
-                    className="w-full px-3 py-2 bg-background border border-surface-border rounded-lg text-xs text-white focus:outline-none"
-                  />
-                </div>
-              </div>
-
               <div className="flex justify-end gap-3 pt-3 border-t border-surface-border">
                 <Button
                   type="button"
@@ -1213,10 +1476,9 @@ export const StudentTracker: React.FC = () => {
                   variant="primary"
                   size="md"
                   loading={submittingInternship}
-                  disabled={!selectedCompanyId}
                   icon={<Plus className="w-4 h-4 text-black" />}
                 >
-                  Send Verification Request
+                  Save Track
                 </Button>
               </div>
             </form>

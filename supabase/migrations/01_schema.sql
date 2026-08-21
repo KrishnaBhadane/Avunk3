@@ -337,11 +337,94 @@ create index if not exists idx_internship_mentor_reviews_daily_log_id on interns
 alter table internship_mentor_reviews enable row level security;
 
 drop policy if exists "internship_mentor_reviews_all" on internship_mentor_reviews;
-create policy "internship_mentor_reviews_all" on internship_mentor_reviews
+-- ============================================================
+-- 17. INTERNSHIP TASKS (Assigned by College/T&P or Company)
+-- ============================================================
+create table if not exists internship_tasks (
+  id uuid primary key default gen_random_uuid(),
+  internship_id uuid references student_internships(id) on delete cascade,
+  student_id uuid references student_profiles(id) on delete cascade not null,
+  company_id uuid references company_profiles(id) on delete set null,
+  college_id uuid references tp_profiles(id) on delete set null,
+  created_by uuid references profiles(id) on delete set null,
+  created_by_role text not null check (created_by_role in ('tp', 'company')),
+  task_source text not null default 'College / T&P',
+  title text not null,
+  description text not null,
+  instructions text,
+  deadline date not null default (current_date + interval '7 days'),
+  priority text not null default 'medium' check (priority in ('low', 'medium', 'high')),
+  submission_required boolean not null default true,
+  submission_type text not null default 'multiple' check (submission_type in ('text', 'file', 'github', 'url', 'multiple')),
+  status text not null default 'not_started' check (status in ('not_started', 'in_progress', 'submitted', 'under_review', 'completed', 'changes_requested', 'overdue')),
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+create index if not exists idx_internship_tasks_student_id on internship_tasks(student_id);
+create index if not exists idx_internship_tasks_internship_id on internship_tasks(internship_id);
+create index if not exists idx_internship_tasks_company_id on internship_tasks(company_id);
+create index if not exists idx_internship_tasks_created_by on internship_tasks(created_by);
+alter table internship_tasks enable row level security;
+
+drop policy if exists "internship_tasks_all" on internship_tasks;
+create policy "internship_tasks_all" on internship_tasks
   for all using (auth.role() = 'authenticated');
 
 -- ============================================================
--- 17. CREDITS (one row per user)
+-- 18. TASK SUBMISSIONS & VERIFICATIONS
+-- ============================================================
+create table if not exists task_submissions (
+  id uuid primary key default gen_random_uuid(),
+  task_id uuid references internship_tasks(id) on delete cascade not null,
+  student_id uuid references student_profiles(id) on delete cascade not null,
+  submission_text text,
+  file_url text,
+  file_name text,
+  github_url text,
+  demo_url text,
+  status text not null default 'submitted' check (status in ('submitted', 'under_review', 'completed', 'changes_requested', 'rejected')),
+  submitted_at timestamptz default now(),
+  reviewed_at timestamptz,
+  reviewed_by uuid references profiles(id) on delete set null,
+  reviewer_name text,
+  review_comment text
+);
+
+create index if not exists idx_task_submissions_task_id on task_submissions(task_id);
+create index if not exists idx_task_submissions_student_id on task_submissions(student_id);
+alter table task_submissions enable row level security;
+
+drop policy if exists "task_submissions_all" on task_submissions;
+create policy "task_submissions_all" on task_submissions
+  for all using (auth.role() = 'authenticated');
+
+-- ============================================================
+-- 19. INTERNSHIP ATTENDANCE / PRESENCE (OPTIONAL)
+-- ============================================================
+create table if not exists internship_attendance (
+  id uuid primary key default gen_random_uuid(),
+  internship_id uuid references student_internships(id) on delete cascade not null,
+  student_id uuid references student_profiles(id) on delete cascade not null,
+  company_id uuid references company_profiles(id) on delete cascade not null,
+  date date not null default current_date,
+  status text not null check (status in ('present', 'absent', 'half_day', 'leave')),
+  marked_by uuid references profiles(id) on delete set null,
+  created_at timestamptz default now(),
+  unique(internship_id, date)
+);
+
+create index if not exists idx_internship_attendance_internship_id on internship_attendance(internship_id);
+create index if not exists idx_internship_attendance_student_id on internship_attendance(student_id);
+create index if not exists idx_internship_attendance_company_id on internship_attendance(company_id);
+alter table internship_attendance enable row level security;
+
+drop policy if exists "internship_attendance_all" on internship_attendance;
+create policy "internship_attendance_all" on internship_attendance
+  for all using (auth.role() = 'authenticated');
+
+-- ============================================================
+-- 20. CREDITS (one row per user)
 -- ============================================================
 create table if not exists credits (
   id uuid primary key default gen_random_uuid(),

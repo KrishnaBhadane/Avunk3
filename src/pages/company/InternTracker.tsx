@@ -6,11 +6,24 @@ import {
   submitMentorReview,
   calculateProgressStats,
   verifyInternship,
+  fetchTasksForCompany,
+  createInternshipTask,
+  reviewTaskSubmission,
+  markStudentAttendance,
+  fetchCompanyAttendance,
+  calculateAttendanceStats,
+  calculateTaskProgress,
 } from '../../lib/internshipTracker';
 import type {
   StudentInternship,
   InternshipDailyLog,
   InternshipProgressStats,
+  InternshipTask,
+  TaskPriority,
+  TaskSubmissionType,
+  InternshipAttendanceRecord,
+  AttendanceStatus,
+  AttendanceSummaryStats,
 } from '../../types';
 import { Card } from '../../components/common/Card';
 import { Button } from '../../components/common/Button';
@@ -20,9 +33,7 @@ import {
   CheckCircle2,
   AlertCircle,
   Clock,
-  Calendar,
   GraduationCap,
-  FileText,
   Code2,
   Globe,
   ExternalLink,
@@ -30,11 +41,13 @@ import {
   ChevronUp,
   Check,
   X,
-  AlertTriangle,
   Loader2,
   Send,
   ShieldCheck,
   ShieldX,
+  ListTodo,
+  UserCheck,
+  Plus,
 } from 'lucide-react';
 
 interface ExtendedInternItem extends StudentInternship {
@@ -45,20 +58,47 @@ interface ExtendedInternItem extends StudentInternship {
 }
 
 export const CompanyInternTracker: React.FC = () => {
-  const { companyProfile } = useAuth();
+  const { companyProfile, user } = useAuth();
 
   const [interns, setInterns] = useState<ExtendedInternItem[]>([]);
   const [selectedIntern, setSelectedIntern] = useState<ExtendedInternItem | null>(null);
-  const [dailyLogs, setDailyLogs] = useState<InternshipDailyLog[]>([]);
-  const [stats, setStats] = useState<InternshipProgressStats | null>(null);
+  const [activeTab, setActiveTab] = useState<'tasks' | 'logs' | 'attendance'>('tasks');
   const [loading, setLoading] = useState(true);
 
-  // Mentor Review Form State
+  // Intern Tasks
+  const [companyTasks, setCompanyTasks] = useState<InternshipTask[]>([]);
+  const [showCreateTaskModal, setShowCreateTaskModal] = useState(false);
+  const [newTaskTitle, setNewTaskTitle] = useState('');
+  const [newTaskDescription, setNewTaskDescription] = useState('');
+  const [newTaskInstructions, setNewTaskInstructions] = useState('');
+  const [newTaskDeadline, setNewTaskDeadline] = useState(
+    new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+  );
+  const [newTaskPriority, setNewTaskPriority] = useState<TaskPriority>('medium');
+  const [newTaskSubmissionType, setNewTaskSubmissionType] = useState<TaskSubmissionType>('multiple');
+  const [assigningTask, setAssigningTask] = useState(false);
+
+  // Task Review State
+  const [reviewingTaskId, setReviewingTaskId] = useState<string | null>(null);
+  const [taskReviewDecision, setTaskReviewDecision] = useState<'completed' | 'changes_requested' | 'rejected'>('completed');
+  const [taskReviewComment, setTaskReviewComment] = useState('');
+  const [submittingTaskReview, setSubmittingTaskReview] = useState(false);
+
+  // Daily Work Logs State
+  const [dailyLogs, setDailyLogs] = useState<InternshipDailyLog[]>([]);
+  const [stats, setStats] = useState<InternshipProgressStats | null>(null);
   const [reviewingLogId, setReviewingLogId] = useState<string | null>(null);
-  const [reviewDecision, setReviewDecision] = useState<'approved' | 'changes_requested' | 'rejected'>('approved');
-  const [reviewComment, setReviewComment] = useState('');
-  const [submittingReview, setSubmittingReview] = useState(false);
+  const [logReviewDecision, setLogReviewDecision] = useState<'approved' | 'changes_requested' | 'rejected'>('approved');
+  const [logReviewComment, setLogReviewComment] = useState('');
+  const [submittingLogReview, setSubmittingLogReview] = useState(false);
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
+
+  // Attendance Management State
+  const [attendanceRecords, setAttendanceRecords] = useState<InternshipAttendanceRecord[]>([]);
+  const [attendanceStats, setAttendanceStats] = useState<AttendanceSummaryStats | null>(null);
+  const [attendanceDate, setAttendanceDate] = useState(new Date().toISOString().split('T')[0]);
+  const [attendanceStatus, setAttendanceStatus] = useState<AttendanceStatus>('present');
+  const [savingAttendance, setSavingAttendance] = useState(false);
 
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
@@ -68,115 +108,231 @@ export const CompanyInternTracker: React.FC = () => {
   const pendingInterns = interns.filter((i) => i.status === 'pending_verification');
   const verifiedInterns = interns.filter((i) => i.status !== 'pending_verification');
 
-  // Fetch interns for company
+  // Load Interns and their tasks
   const loadInterns = useCallback(async () => {
     if (!companyProfile) return;
     setLoading(true);
 
-    const list = await fetchCompanyInterns(companyProfile.id, companyProfile.company_name);
-    setInterns(list);
+    try {
+      const list = await fetchCompanyInterns(companyProfile.id, companyProfile.company_name);
+      setInterns(list);
 
-    // Auto-select the first verified intern
-    const verified = list.filter((i) => i.status !== 'pending_verification');
-    if (verified.length > 0) {
-      setSelectedIntern(verified[0]);
-      const logs = await fetchInternshipDailyLogs(verified[0].id);
-      setDailyLogs(logs);
-      setStats(calculateProgressStats(verified[0], logs));
-    } else {
-      setSelectedIntern(null);
-      setDailyLogs([]);
-      setStats(null);
+      const tasks = await fetchTasksForCompany(companyProfile.id);
+      setCompanyTasks(tasks);
+
+      const verified = list.filter((i) => i.status !== 'pending_verification');
+      if (verified.length > 0) {
+        const target = selectedIntern ? verified.find((v) => v.id === selectedIntern.id) || verified[0] : verified[0];
+        setSelectedIntern(target);
+
+        // Fetch logs
+        const logs = await fetchInternshipDailyLogs(target.id);
+        setDailyLogs(logs);
+        setStats(calculateProgressStats(target, logs));
+
+        // Fetch attendance
+        const attRecords = await fetchCompanyAttendance(companyProfile.id);
+        const internAtt = attRecords.filter((a) => a.student_id === target.student_id);
+        setAttendanceRecords(internAtt);
+        setAttendanceStats(calculateAttendanceStats(internAtt));
+      } else {
+        setSelectedIntern(null);
+        setDailyLogs([]);
+        setStats(null);
+      }
+    } catch (err) {
+      console.error('Error loading company intern data:', err);
+    } finally {
+      setLoading(false);
     }
-
-    setLoading(false);
-  }, [companyProfile]);
+  }, [companyProfile, selectedIntern]);
 
   useEffect(() => {
     loadInterns();
   }, [loadInterns]);
 
-  // Select an intern to view their work logs
+  // Select an intern to view their details
   const handleSelectIntern = async (intern: ExtendedInternItem) => {
-    if (intern.status === 'pending_verification') return; // Can't view logs for unverified
     setSelectedIntern(intern);
-    setLoading(true);
     setReviewingLogId(null);
+    setReviewingTaskId(null);
 
     const logs = await fetchInternshipDailyLogs(intern.id);
     setDailyLogs(logs);
     setStats(calculateProgressStats(intern, logs));
-    setLoading(false);
+
+    if (companyProfile) {
+      const attRecords = await fetchCompanyAttendance(companyProfile.id);
+      const internAtt = attRecords.filter((a) => a.student_id === intern.student_id);
+      setAttendanceRecords(internAtt);
+      setAttendanceStats(calculateAttendanceStats(internAtt));
+    }
   };
 
-  // Verify or reject intern
+  // Handle Verify/Reject intern
   const handleVerifyIntern = async (internshipId: string, decision: 'active' | 'rejected') => {
     setVerifyingId(internshipId);
     setError('');
 
     const res = await verifyInternship(internshipId, decision);
     if (!res.success) {
-      setError(res.error || 'Failed to process verification');
+      setError(res.error || 'Failed to update internship status');
       setVerifyingId(null);
       return;
     }
 
-    setNotice(
-      decision === 'active'
-        ? 'Intern verified! They can now start logging daily work.'
-        : 'Internship request rejected and removed.'
-    );
-    setTimeout(() => setNotice(''), 5000);
+    setNotice(decision === 'active' ? '✓ Intern verified and activated!' : 'Internship request rejected.');
+    setTimeout(() => setNotice(''), 4000);
     setVerifyingId(null);
+    await loadInterns();
+  };
+
+  // Create Company Task
+  const handleCreateCompanyTask = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!companyProfile || !selectedIntern) return;
+
+    setAssigningTask(true);
+    setError('');
+
+    const res = await createInternshipTask({
+      student_ids: [selectedIntern.student_id],
+      internship_id: selectedIntern.id,
+      company_id: companyProfile.id,
+      created_by: user?.id,
+      created_by_role: 'company',
+      task_source: `Company (${companyProfile.company_name})`,
+      title: newTaskTitle.trim(),
+      description: newTaskDescription.trim(),
+      instructions: newTaskInstructions.trim() || undefined,
+      deadline: newTaskDeadline,
+      priority: newTaskPriority,
+      submission_required: true,
+      submission_type: newTaskSubmissionType,
+    });
+
+    if (!res.success) {
+      setError(res.error || 'Failed to create task');
+      setAssigningTask(false);
+      return;
+    }
+
+    setShowCreateTaskModal(false);
+    setAssigningTask(false);
+    setNewTaskTitle('');
+    setNewTaskDescription('');
+    setNewTaskInstructions('');
+    setNotice(`✓ Task assigned to ${selectedIntern.student_name}!`);
+    setTimeout(() => setNotice(''), 4000);
 
     await loadInterns();
   };
 
-  // Submit mentor review decision
-  const handleSubmitReview = async (logId: string) => {
-    if (!reviewComment.trim()) {
-      setError('Please provide feedback or instructions in the comment box.');
-      return;
-    }
-
-    setSubmittingReview(true);
+  // Review Task Submission
+  const handleReviewTask = async (taskId: string, subId: string) => {
+    setSubmittingTaskReview(true);
     setError('');
 
-    const res = await submitMentorReview(
-      logId,
-      reviewDecision,
-      reviewComment.trim(),
-      companyProfile?.company_name || 'Enterprise Supervisor'
+    const res = await reviewTaskSubmission(
+      taskId,
+      subId,
+      taskReviewDecision,
+      taskReviewComment.trim() || 'Reviewed by Company Mentor',
+      user?.id,
+      companyProfile?.company_name || 'Company Mentor'
     );
 
     if (!res.success) {
-      setError(res.error || 'Failed to submit review');
-      setSubmittingReview(false);
+      setError(res.error || 'Failed to submit task review');
+      setSubmittingTaskReview(false);
       return;
     }
 
     setNotice(
-      reviewDecision === 'approved'
-        ? 'Work log marked as Approved!'
-        : reviewDecision === 'changes_requested'
-        ? 'Feedback sent to intern for updates!'
-        : 'Work log marked as Rejected.'
+      taskReviewDecision === 'completed'
+        ? '✓ Task deliverable verified and marked as Completed!'
+        : 'Feedback sent to intern for updates.'
     );
     setTimeout(() => setNotice(''), 4000);
+    setReviewingTaskId(null);
+    setTaskReviewComment('');
+    setSubmittingTaskReview(false);
 
+    await loadInterns();
+  };
+
+  // Submit Daily Log Review
+  const handleSubmitLogReview = async (logId: string) => {
+    if (!companyProfile) return;
+    setSubmittingLogReview(true);
+    setError('');
+
+    const res = await submitMentorReview(
+      logId,
+      logReviewDecision,
+      logReviewComment.trim() || 'Reviewed and verified.',
+      companyProfile.company_name || 'Company Reviewer'
+    );
+
+    if (!res.success) {
+      setError(res.error || 'Failed to submit review');
+      setSubmittingLogReview(false);
+      return;
+    }
+
+    setNotice(`Log review saved as "${logReviewDecision.replace('_', ' ')}"!`);
+    setTimeout(() => setNotice(''), 4000);
     setReviewingLogId(null);
-    setReviewComment('');
-    setSubmittingReview(false);
+    setLogReviewComment('');
+    setSubmittingLogReview(false);
 
-    // Refresh logs
     if (selectedIntern) {
-      const logs = await fetchInternshipDailyLogs(selectedIntern.id);
-      setDailyLogs(logs);
-      setStats(calculateProgressStats(selectedIntern, logs));
+      const updatedLogs = await fetchInternshipDailyLogs(selectedIntern.id);
+      setDailyLogs(updatedLogs);
+      setStats(calculateProgressStats(selectedIntern, updatedLogs));
     }
   };
 
-  if (loading && interns.length === 0) {
+  // Save Attendance
+  const handleRecordAttendance = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!companyProfile || !selectedIntern) return;
+
+    setSavingAttendance(true);
+    setError('');
+
+    const res = await markStudentAttendance({
+      internship_id: selectedIntern.id,
+      student_id: selectedIntern.student_id,
+      company_id: companyProfile.id,
+      date: attendanceDate,
+      status: attendanceStatus,
+      marked_by: user?.id,
+    });
+
+    if (!res.success) {
+      setError(res.error || 'Failed to record attendance');
+      setSavingAttendance(false);
+      return;
+    }
+
+    setNotice(`Attendance marked as ${attendanceStatus.toUpperCase()} for ${selectedIntern.student_name}!`);
+    setTimeout(() => setNotice(''), 4000);
+    setSavingAttendance(false);
+
+    const attRecords = await fetchCompanyAttendance(companyProfile.id);
+    const internAtt = attRecords.filter((a) => a.student_id === selectedIntern.student_id);
+    setAttendanceRecords(internAtt);
+    setAttendanceStats(calculateAttendanceStats(internAtt));
+  };
+
+  // Selected intern tasks
+  const selectedInternTasks = companyTasks.filter((t) =>
+    selectedIntern ? t.student_id === selectedIntern.student_id : false
+  );
+  const internTaskStats = calculateTaskProgress(selectedInternTasks);
+
+  if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
         <Loader2 className="w-6 h-6 text-slate-400 animate-spin" />
@@ -187,21 +343,26 @@ export const CompanyInternTracker: React.FC = () => {
   return (
     <div className="space-y-8 antialiased">
       {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-surface-border pb-6">
+      <div className="border-b border-surface-border pb-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight flex items-center gap-2.5">
             <Users className="w-7 h-7 text-white" />
-            Intern Tracker & Mentor Review Portal
+            Company Intern Tracker
           </h1>
           <p className="text-xs text-slate-400 mt-1">
-            Verify intern registrations, monitor daily deliverables, and approve work logs. Only your company's interns are shown.
+            Verify interns, assign tasks, review submitted deliverables, and optionally record presence.
           </p>
         </div>
 
         {selectedIntern && (
-          <Badge variant="info">
-            Managing: {selectedIntern.student_name}
-          </Badge>
+          <Button
+            variant="primary"
+            size="md"
+            onClick={() => setShowCreateTaskModal(true)}
+            icon={<Plus className="w-4 h-4 text-black" />}
+          >
+            + Assign Company Task
+          </Button>
         )}
       </div>
 
@@ -221,52 +382,32 @@ export const CompanyInternTracker: React.FC = () => {
 
       {/* PENDING VERIFICATION REQUESTS */}
       {pendingInterns.length > 0 && (
-        <Card className="p-6 border-amber-800/50 bg-amber-950/10 space-y-4">
-          <div className="flex items-center gap-2.5 border-b border-amber-800/30 pb-3">
-            <AlertTriangle className="w-5 h-5 text-amber-400" />
-            <h2 className="text-sm font-bold text-white uppercase tracking-wider">
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold uppercase tracking-wider text-amber-400">
               Pending Verification Requests ({pendingInterns.length})
-            </h2>
+            </span>
+            <span className="text-[11px] text-slate-400">— Verify interns to activate their daily tracker</span>
           </div>
-          <p className="text-xs text-slate-300">
-            These students claim to be interning at your company. You must verify or reject each request. Until verified, they cannot access the internship tracker.
-          </p>
 
-          <div className="space-y-3">
+          <div className="space-y-2">
             {pendingInterns.map((intern) => (
-              <div
-                key={intern.id}
-                className="p-4 bg-background rounded-xl border border-surface-border flex flex-col md:flex-row md:items-center justify-between gap-4"
-              >
+              <Card key={intern.id} className="p-4 border-amber-800/60 bg-amber-950/20 flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div>
-                  <h4 className="text-sm font-bold text-white">{intern.student_name}</h4>
-                  <p className="text-xs text-slate-300 mt-0.5">
-                    Role: <strong>{intern.role}</strong>
-                  </p>
-                  <div className="flex items-center gap-3 text-[11px] text-slate-400 mt-1 flex-wrap">
-                    <span className="flex items-center gap-1">
-                      <GraduationCap className="w-3 h-3" />
-                      {intern.student_institute}
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <Calendar className="w-3 h-3" />
-                      {new Date(intern.start_date).toLocaleDateString()} – {new Date(intern.end_date).toLocaleDateString()}
-                    </span>
-                    <span>{intern.total_days} days</span>
+                  <div className="flex items-center gap-2.5 flex-wrap">
+                    <h4 className="text-sm font-bold text-white">{intern.student_name}</h4>
+                    <Badge variant="warning">⏳ Pending Verification</Badge>
                   </div>
-                  {/* Show student skills / tech stack */}
-                  {intern.student_skills && intern.student_skills.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5 mt-2">
-                      {intern.student_skills.map((skill, idx) => (
-                        <span key={idx} className="px-2 py-0.5 bg-surface-border text-slate-300 rounded text-[10px] font-medium">
-                          {skill}
-                        </span>
-                      ))}
-                    </div>
-                  )}
+                  <div className="flex items-center gap-3 text-xs text-slate-300 mt-1 flex-wrap">
+                    <span>Role: <strong className="text-white">{intern.role}</strong></span>
+                    <span>•</span>
+                    <span>College: {intern.student_institute}</span>
+                    <span>•</span>
+                    <span>Period: {new Date(intern.start_date).toLocaleDateString()} – {new Date(intern.end_date).toLocaleDateString()} ({intern.total_days} days)</span>
+                  </div>
                 </div>
 
-                <div className="flex items-center gap-2 shrink-0">
+                <div className="flex gap-2 shrink-0">
                   <Button
                     variant="primary"
                     size="sm"
@@ -286,216 +427,323 @@ export const CompanyInternTracker: React.FC = () => {
                     Reject
                   </Button>
                 </div>
-              </div>
+              </Card>
             ))}
           </div>
-        </Card>
+        </div>
       )}
 
-      {interns.length === 0 ? (
+      {/* VERIFIED INTERNS DASHBOARD */}
+      {verifiedInterns.length === 0 ? (
         <Card className="p-12 text-center border-dashed space-y-3">
           <Users className="w-10 h-10 text-slate-600 mx-auto" />
-          <h2 className="text-lg font-bold text-white">No Interns Assigned Yet</h2>
-          <p className="text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
-            When students register and add your company as their active internship provider, their verification request will appear here. Only verified interns will have tracker access.
+          <h2 className="text-lg font-bold text-white">No Active Interns</h2>
+          <p className="text-xs text-slate-400 max-w-sm mx-auto">
+            {pendingInterns.length > 0
+              ? 'You have pending verification requests above. Click "Verify Intern" to activate them.'
+              : 'When students register an internship with your company, their tracking records will appear here.'}
           </p>
         </Card>
-      ) : verifiedInterns.length === 0 && pendingInterns.length > 0 ? (
-        <Card className="p-8 text-center border-dashed space-y-2">
-          <p className="text-sm text-slate-400">No verified interns yet. Verify pending requests above to enable intern tracking.</p>
-        </Card>
-      ) : verifiedInterns.length > 0 ? (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Interns List Sidebar */}
-          <div className="space-y-3">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
-              <Users className="w-4 h-4 text-slate-400" />
-              Verified Interns ({verifiedInterns.length})
-            </h3>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+          {/* Interns Selector Sidebar */}
+          <div className="lg:col-span-1 space-y-3">
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-400 block">
+              Active Interns ({verifiedInterns.length})
+            </span>
 
-            <div className="space-y-2">
+            <div className="space-y-2 max-h-[600px] overflow-y-auto pr-1">
               {verifiedInterns.map((intern) => {
                 const isSelected = selectedIntern?.id === intern.id;
+                const studentTasks = companyTasks.filter((t) => t.student_id === intern.student_id);
+                const completedCount = studentTasks.filter((t) => t.status === 'completed').length;
+                const pct = studentTasks.length > 0 ? Math.round((completedCount / studentTasks.length) * 100) : 0;
 
                 return (
-                  <Card
+                  <button
                     key={intern.id}
-                    className={`p-4 transition-all cursor-pointer border ${
-                      isSelected
-                        ? 'border-emerald-500/80 bg-emerald-950/20 shadow-md ring-1 ring-emerald-500/40'
-                        : 'border-surface-border bg-surface hover:border-slate-600'
-                    }`}
+                    type="button"
                     onClick={() => handleSelectIntern(intern)}
+                    className={`w-full p-4 rounded-xl text-left transition-all border block ${
+                      isSelected
+                        ? 'bg-surface border-white/40 shadow-lg'
+                        : 'bg-surface/50 border-surface-border hover:border-slate-600'
+                    }`}
                   >
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <h4 className="text-sm font-bold text-white">{intern.student_name}</h4>
-                        <p className="text-xs text-slate-300 mt-0.5 font-medium">{intern.role}</p>
-                        <p className="text-[11px] text-slate-500 mt-1 flex items-center gap-1">
-                          <GraduationCap className="w-3.5 h-3.5 text-slate-400" />
-                          {intern.student_institute}
-                        </p>
-                        {/* Show tech stack */}
-                        {intern.student_skills && intern.student_skills.length > 0 && (
-                          <div className="flex flex-wrap gap-1 mt-1.5">
-                            {intern.student_skills.slice(0, 4).map((skill, idx) => (
-                              <span key={idx} className="px-1.5 py-0.5 bg-surface-border text-slate-400 rounded text-[9px] font-medium">
-                                {skill}
-                              </span>
-                            ))}
-                            {intern.student_skills.length > 4 && (
-                              <span className="text-[9px] text-slate-500">+{intern.student_skills.length - 4}</span>
-                            )}
-                          </div>
-                        )}
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-xl bg-surface-border text-white text-xs font-black flex items-center justify-center shrink-0 border border-slate-700 uppercase">
+                        {intern.student_name?.charAt(0)}
                       </div>
-
-                      <Badge variant={intern.status === 'completed' ? 'success' : 'info'}>
-                        {intern.total_days}d Track
-                      </Badge>
+                      <div className="min-w-0 flex-1">
+                        <h4 className="text-xs font-bold text-white truncate">{intern.student_name}</h4>
+                        <span className="text-[11px] text-slate-400 block truncate">{intern.role}</span>
+                        <div className="flex justify-between items-center text-[10px] text-slate-400 mt-1">
+                          <span>{intern.student_institute}</span>
+                          <span className="text-emerald-400 font-bold">{pct}%</span>
+                        </div>
+                      </div>
                     </div>
-                  </Card>
+                  </button>
                 );
               })}
             </div>
           </div>
 
-          {/* Intern Details & Logs Review Section */}
+          {/* Selected Intern Detail Panel */}
           {selectedIntern && (
-            <div className="lg:col-span-2 space-y-6">
-              {/* Intern Progress Overview */}
-              <div className="p-6 rounded-2xl border border-slate-700 bg-gradient-to-r from-surface via-sidebar to-surface shadow-xl flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+            <div className="lg:col-span-3 space-y-6">
+              {/* Intern Overview Header */}
+              <div className="p-6 rounded-2xl border border-slate-700 bg-surface shadow-xl flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                 <div>
-                  <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">
-                    Intern Profile & Track
-                  </span>
-                  <h2 className="text-xl font-black text-white tracking-tight mt-0.5">
-                    {selectedIntern.student_name}
-                  </h2>
-                  <p className="text-xs text-slate-300 mt-0.5">
-                    {selectedIntern.role} • {selectedIntern.student_institute}
-                  </p>
-                  {/* Show tech stack */}
-                  {selectedIntern.student_skills && selectedIntern.student_skills.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5 mt-2">
-                      {selectedIntern.student_skills.map((skill, idx) => (
-                        <span key={idx} className="px-2 py-0.5 bg-surface-border text-slate-300 rounded text-[10px] font-medium">
-                          {skill}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                  <div className="flex items-center gap-3 text-[11px] text-slate-400 mt-2">
+                  <div className="flex items-center gap-2.5 flex-wrap">
+                    <h3 className="text-xl font-extrabold text-white">{selectedIntern.student_name}</h3>
+                    <Badge variant={selectedIntern.status === 'completed' ? 'success' : 'info'}>
+                      {selectedIntern.status === 'completed' ? 'Completed' : 'Active Intern'}
+                    </Badge>
+                  </div>
+
+                  <div className="flex items-center gap-3 text-xs text-slate-400 mt-1 flex-wrap">
                     <span className="flex items-center gap-1">
-                      <Calendar className="w-3 h-3 text-slate-400" />
-                      {new Date(selectedIntern.start_date).toLocaleDateString()} – {new Date(selectedIntern.end_date).toLocaleDateString()}
+                      <GraduationCap className="w-3.5 h-3.5" />
+                      {selectedIntern.student_institute}
                     </span>
+                    <span>•</span>
+                    <span>Role: <strong className="text-white">{selectedIntern.role}</strong></span>
+                    <span>•</span>
+                    <span>{new Date(selectedIntern.start_date).toLocaleDateString()} – {new Date(selectedIntern.end_date).toLocaleDateString()}</span>
                   </div>
                 </div>
 
-                <div className="flex gap-3 text-right">
-                  <div className="p-3 bg-background rounded-xl border border-surface-border">
-                    <span className="text-[10px] text-slate-400 uppercase font-bold block">Days Done</span>
-                    <span className="text-xl font-black text-white">
-                      {stats?.days_completed || 0} / {selectedIntern.total_days}
+                <div className="flex gap-2 text-center shrink-0">
+                  <div className="px-3 py-1.5 bg-background rounded-lg border border-surface-border">
+                    <span className="text-[9px] text-slate-400 uppercase font-bold block">Tasks Done</span>
+                    <span className="text-sm font-black text-white">
+                      {internTaskStats.completed_tasks} / {internTaskStats.total_tasks}
                     </span>
                   </div>
-                  <div className="p-3 bg-background rounded-xl border border-surface-border">
-                    <span className="text-[10px] text-amber-400 uppercase font-bold block">Pending Review</span>
-                    <span className="text-xl font-black text-amber-400">
-                      {stats?.pending_logs || 0}
+                  <div className="px-3 py-1.5 bg-background rounded-lg border border-surface-border">
+                    <span className="text-[9px] text-emerald-400 uppercase font-bold block">Progress</span>
+                    <span className="text-sm font-black text-emerald-400">
+                      {internTaskStats.has_tasks ? `${internTaskStats.progress_percent}%` : `${stats?.days_completed || 0} days`}
                     </span>
                   </div>
                 </div>
               </div>
 
-              {/* Work Logs List for Selected Intern */}
-              <div className="space-y-4">
-                <div className="flex justify-between items-center border-b border-surface-border pb-3">
-                  <h3 className="text-base font-bold text-white tracking-tight flex items-center gap-2">
-                    <Clock className="w-4 h-4 text-slate-400" />
-                    Daily Work Logs Submitted ({dailyLogs.length})
-                  </h3>
-                  <span className="text-xs text-slate-400">
-                    {stats?.approved_logs || 0} approved • {stats?.pending_logs || 0} pending
-                  </span>
-                </div>
+              {/* Tabs */}
+              <div className="flex border-b border-surface-border gap-6">
+                <button
+                  onClick={() => setActiveTab('tasks')}
+                  className={`pb-3 text-xs font-bold transition-all border-b-2 flex items-center gap-2 ${
+                    activeTab === 'tasks'
+                      ? 'border-white text-white'
+                      : 'border-transparent text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <ListTodo className="w-3.5 h-3.5" />
+                  Assigned Tasks ({selectedInternTasks.length})
+                </button>
 
-                {dailyLogs.length === 0 ? (
-                  <Card className="p-8 text-center border-dashed">
-                    <p className="text-xs text-slate-400">This intern has not submitted any work logs yet.</p>
-                  </Card>
-                ) : (
-                  <div className="space-y-4">
-                    {dailyLogs.map((log) => {
-                      const isExpanded = expandedLogId === log.id;
-                      const isReviewing = reviewingLogId === log.id;
+                <button
+                  onClick={() => setActiveTab('logs')}
+                  className={`pb-3 text-xs font-bold transition-all border-b-2 flex items-center gap-2 ${
+                    activeTab === 'logs'
+                      ? 'border-white text-white'
+                      : 'border-transparent text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <Clock className="w-3.5 h-3.5" />
+                  Daily Work Logs ({dailyLogs.length})
+                </button>
 
-                      return (
-                        <Card
-                          key={log.id}
-                          className={`p-5 transition-all border ${
-                            log.status === 'approved'
-                              ? 'border-emerald-900/40 bg-emerald-950/10'
-                              : log.status === 'changes_requested'
-                              ? 'border-amber-800 bg-amber-950/20'
-                              : log.status === 'rejected'
-                              ? 'border-rose-800 bg-rose-950/20'
-                              : 'border-surface-border bg-surface'
-                          }`}
-                        >
-                          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-                            <div className="flex items-start md:items-center gap-3">
-                              <div className="w-12 h-12 rounded-xl bg-surface-border text-white text-xs font-black flex flex-col items-center justify-center shrink-0 border border-slate-700">
-                                <span>{new Date(log.log_date).getDate()}</span>
-                                <span className="text-[9px] uppercase font-bold text-slate-400">
-                                  {new Date(log.log_date).toLocaleString('default', { month: 'short' })}
+                <button
+                  onClick={() => setActiveTab('attendance')}
+                  className={`pb-3 text-xs font-bold transition-all border-b-2 flex items-center gap-2 ${
+                    activeTab === 'attendance'
+                      ? 'border-white text-white'
+                      : 'border-transparent text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <UserCheck className="w-3.5 h-3.5" />
+                  Attendance Management (Optional)
+                </button>
+              </div>
+
+              {/* TAB 1: ASSIGNED TASKS & DELIVERABLE REVIEW */}
+              {activeTab === 'tasks' && (
+                <div className="space-y-4">
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs font-bold text-slate-400 uppercase">
+                      Tasks Assigned to {selectedIntern.student_name}
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setShowCreateTaskModal(true)}
+                      icon={<Plus className="w-3.5 h-3.5" />}
+                    >
+                      + Assign Task
+                    </Button>
+                  </div>
+
+                  {selectedInternTasks.length === 0 ? (
+                    <Card className="p-10 text-center border-dashed space-y-3">
+                      <ListTodo className="w-8 h-8 text-slate-600 mx-auto" />
+                      <p className="text-sm font-bold text-white">No tasks assigned yet</p>
+                      <Button variant="primary" size="sm" onClick={() => setShowCreateTaskModal(true)}>
+                        + Assign First Task
+                      </Button>
+                    </Card>
+                  ) : (
+                    <div className="space-y-3">
+                      {selectedInternTasks.map((task) => {
+                        const latestSub = task.submissions?.[0];
+                        const isReviewing = reviewingTaskId === task.id;
+
+                        return (
+                          <Card key={task.id} className="p-5 bg-surface border-surface-border space-y-3">
+                            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                              <div className="space-y-1">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <h4 className="text-sm font-bold text-white">{task.title}</h4>
+                                  <span className="text-[10px] px-2 py-0.5 rounded font-bold bg-indigo-950/80 border border-indigo-800 text-indigo-300">
+                                    {task.task_source}
+                                  </span>
+                                  <Badge variant={task.status === 'completed' ? 'success' : task.status === 'overdue' ? 'danger' : 'info'}>
+                                    {task.status}
+                                  </Badge>
+                                </div>
+                                <p className="text-xs text-slate-300">{task.description}</p>
+                                <span className="text-[11px] text-slate-500 block">
+                                  Deadline: {new Date(task.deadline).toLocaleDateString()} • Priority: {task.priority}
                                 </span>
                               </div>
 
-                              <div>
-                                <div className="flex items-center gap-2.5 flex-wrap">
-                                  <h4 className="text-sm font-bold text-white">{log.title}</h4>
-                                  <span className="text-xs px-2 py-0.5 rounded bg-black/40 text-slate-300 font-mono">
-                                    {log.hours_worked} hrs
-                                  </span>
-                                  <Badge
-                                    variant={
-                                      log.status === 'approved'
-                                        ? 'success'
-                                        : log.status === 'changes_requested'
-                                        ? 'warning'
-                                        : log.status === 'rejected'
-                                        ? 'danger'
-                                        : 'info'
-                                    }
-                                  >
-                                    {log.status === 'approved'
-                                      ? '✓ Approved'
-                                      : log.status === 'changes_requested'
-                                      ? '⚠ Changes Requested'
-                                      : log.status === 'rejected'
-                                      ? '✕ Rejected'
-                                      : '● Pending Review'}
-                                  </Badge>
-                                </div>
-                                <p className="text-xs text-slate-300 mt-1 leading-relaxed">
-                                  {log.description}
-                                </p>
-                              </div>
+                              {latestSub && (
+                                <Button
+                                  variant="primary"
+                                  size="sm"
+                                  onClick={() => {
+                                    setReviewingTaskId(isReviewing ? null : task.id);
+                                    setTaskReviewComment('');
+                                    setTaskReviewDecision('completed');
+                                  }}
+                                >
+                                  {isReviewing ? 'Close' : 'Review Deliverable'}
+                                </Button>
+                              )}
                             </div>
 
-                            <div className="flex items-center gap-2 shrink-0 self-end md:self-auto">
+                            {/* Deliverable preview */}
+                            {latestSub && (
+                              <div className="p-3 bg-background rounded-xl border border-surface-border space-y-2 text-xs">
+                                {latestSub.submission_text && (
+                                  <p className="text-slate-300">{latestSub.submission_text}</p>
+                                )}
+                                <div className="flex flex-wrap gap-2">
+                                  {latestSub.github_url && (
+                                    <a href={latestSub.github_url} target="_blank" rel="noreferrer" className="text-indigo-400 hover:underline flex items-center gap-1">
+                                      <Code2 className="w-3.5 h-3.5" /> GitHub Code <ExternalLink className="w-2.5 h-2.5" />
+                                    </a>
+                                  )}
+                                  {latestSub.demo_url && (
+                                    <a href={latestSub.demo_url} target="_blank" rel="noreferrer" className="text-emerald-400 hover:underline flex items-center gap-1">
+                                      <Globe className="w-3.5 h-3.5" /> Live Demo <ExternalLink className="w-2.5 h-2.5" />
+                                    </a>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Task Review Action Drawer */}
+                            {isReviewing && (
+                              <div className="p-4 bg-background rounded-xl border border-slate-700 space-y-3">
+                                <span className="text-xs font-bold text-white uppercase block">Record Review Decision</span>
+                                <div className="flex gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => setTaskReviewDecision('completed')}
+                                    className={`px-3 py-1 rounded text-xs font-bold ${taskReviewDecision === 'completed' ? 'bg-emerald-600 text-white' : 'bg-surface text-slate-300'}`}
+                                  >
+                                    Approve (Completed)
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setTaskReviewDecision('changes_requested')}
+                                    className={`px-3 py-1 rounded text-xs font-bold ${taskReviewDecision === 'changes_requested' ? 'bg-amber-600 text-white' : 'bg-surface text-slate-300'}`}
+                                  >
+                                    Request Changes
+                                  </button>
+                                </div>
+
+                                <textarea
+                                  rows={2}
+                                  value={taskReviewComment}
+                                  onChange={(e) => setTaskReviewComment(e.target.value)}
+                                  placeholder="Feedback comments for student..."
+                                  className="w-full px-3 py-2 bg-surface border border-surface-border rounded-lg text-xs text-white focus:outline-none"
+                                />
+
+                                <div className="flex justify-end gap-2">
+                                  <Button variant="outline" size="sm" onClick={() => setReviewingTaskId(null)}>Cancel</Button>
+                                  <Button
+                                    variant="primary"
+                                    size="sm"
+                                    loading={submittingTaskReview}
+                                    onClick={() => handleReviewTask(task.id, latestSub?.id || '')}
+                                  >
+                                    Submit Review
+                                  </Button>
+                                </div>
+                              </div>
+                            )}
+                          </Card>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* TAB 2: DAILY WORK LOGS */}
+              {activeTab === 'logs' && (
+                <div className="space-y-3">
+                  {dailyLogs.length === 0 ? (
+                    <Card className="p-10 text-center border-dashed">
+                      <p className="text-xs text-slate-400">No daily logs submitted by this intern yet.</p>
+                    </Card>
+                  ) : (
+                    dailyLogs.map((log) => {
+                      const isReviewing = reviewingLogId === log.id;
+                      const isExpanded = expandedLogId === log.id;
+
+                      return (
+                        <Card key={log.id} className="p-5 bg-surface border-surface-border space-y-3">
+                          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                            <div>
+                              <div className="flex items-center gap-2.5 flex-wrap">
+                                <h4 className="text-sm font-bold text-white">{log.title}</h4>
+                                <span className="text-xs px-2 py-0.5 rounded bg-black/40 text-slate-300 font-mono">
+                                  {log.hours_worked} hrs • {new Date(log.log_date).toLocaleDateString()}
+                                </span>
+                                <Badge variant={log.status === 'approved' ? 'success' : log.status === 'changes_requested' ? 'warning' : 'info'}>
+                                  {log.status}
+                                </Badge>
+                              </div>
+                              <p className="text-xs text-slate-300 mt-1">{log.description}</p>
+                            </div>
+
+                            <div className="flex items-center gap-2 shrink-0">
                               <Button
                                 variant="primary"
                                 size="sm"
                                 onClick={() => {
                                   setReviewingLogId(isReviewing ? null : log.id);
-                                  setReviewComment('');
-                                  setReviewDecision('approved');
+                                  setLogReviewComment('');
+                                  setLogReviewDecision('approved');
                                 }}
                               >
-                                {isReviewing ? 'Cancel' : 'Review & Decision'}
+                                {isReviewing ? 'Cancel' : 'Review Log'}
                               </Button>
                               <Button
                                 variant="ghost"
@@ -508,144 +756,225 @@ export const CompanyInternTracker: React.FC = () => {
                             </div>
                           </div>
 
-                          {/* Mentor Review Action Drawer */}
+                          {/* Review form */}
                           {isReviewing && (
-                            <div className="mt-4 pt-4 border-t border-surface-border p-4 bg-background rounded-xl border border-slate-700 space-y-4">
-                              <span className="text-xs font-bold text-white uppercase tracking-wider block">
-                                Submit Supervisor Review Decision
-                              </span>
-
+                            <div className="p-4 bg-background rounded-xl border border-slate-700 space-y-3 text-xs">
+                              <span className="font-bold text-white uppercase block">Mentor Decision</span>
                               <div className="flex gap-2">
                                 <button
                                   type="button"
-                                  onClick={() => setReviewDecision('approved')}
-                                  className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 border ${
-                                    reviewDecision === 'approved'
-                                      ? 'bg-emerald-600 text-white border-emerald-500'
-                                      : 'bg-surface-border text-slate-300 border-slate-700 hover:text-white'
-                                  }`}
+                                  onClick={() => setLogReviewDecision('approved')}
+                                  className={`px-3 py-1 rounded text-xs font-bold ${logReviewDecision === 'approved' ? 'bg-emerald-600 text-white' : 'bg-surface text-slate-300'}`}
                                 >
-                                  <Check className="w-3.5 h-3.5" /> Approve Work Log
+                                  Approve Work
                                 </button>
                                 <button
                                   type="button"
-                                  onClick={() => setReviewDecision('changes_requested')}
-                                  className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 border ${
-                                    reviewDecision === 'changes_requested'
-                                      ? 'bg-amber-600 text-white border-amber-500'
-                                      : 'bg-surface-border text-slate-300 border-slate-700 hover:text-white'
-                                  }`}
+                                  onClick={() => setLogReviewDecision('changes_requested')}
+                                  className={`px-3 py-1 rounded text-xs font-bold ${logReviewDecision === 'changes_requested' ? 'bg-amber-600 text-white' : 'bg-surface text-slate-300'}`}
                                 >
-                                  <AlertTriangle className="w-3.5 h-3.5" /> Request Changes
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => setReviewDecision('rejected')}
-                                  className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 border ${
-                                    reviewDecision === 'rejected'
-                                      ? 'bg-rose-600 text-white border-rose-500'
-                                      : 'bg-surface-border text-slate-300 border-slate-700 hover:text-white'
-                                  }`}
-                                >
-                                  <X className="w-3.5 h-3.5" /> Reject
+                                  Request Changes
                                 </button>
                               </div>
 
-                              <div>
-                                <label className="block text-[11px] text-slate-400 font-semibold mb-1">
-                                  Mentor Feedback / Instructions *
-                                </label>
-                                <textarea
-                                  rows={2}
-                                  value={reviewComment}
-                                  onChange={(e) => setReviewComment(e.target.value)}
-                                  placeholder="e.g. Great implementation! Please add error boundary validation for password fields."
-                                  className="w-full px-3 py-2 bg-surface border border-surface-border rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none"
-                                />
-                              </div>
+                              <textarea
+                                rows={2}
+                                value={logReviewComment}
+                                onChange={(e) => setLogReviewComment(e.target.value)}
+                                placeholder="Mentor feedback..."
+                                className="w-full px-3 py-2 bg-surface border border-surface-border rounded-lg text-xs text-white focus:outline-none"
+                              />
 
                               <div className="flex justify-end gap-2">
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => setReviewingLogId(null)}
-                                >
-                                  Cancel
-                                </Button>
-                                <Button
-                                  variant="primary"
-                                  size="sm"
-                                  loading={submittingReview}
-                                  onClick={() => handleSubmitReview(log.id)}
-                                  icon={<Send className="w-3.5 h-3.5 text-black" />}
-                                >
-                                  Submit Decision
+                                <Button variant="outline" size="sm" onClick={() => setReviewingLogId(null)}>Cancel</Button>
+                                <Button variant="primary" size="sm" loading={submittingLogReview} onClick={() => handleSubmitLogReview(log.id)}>
+                                  Save Review
                                 </Button>
                               </div>
-                            </div>
-                          )}
-
-                          {/* Expanded Details */}
-                          {isExpanded && (
-                            <div className="mt-4 pt-4 border-t border-surface-border space-y-3 text-xs">
-                              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                                <div className="p-3 bg-background rounded-lg border border-surface-border">
-                                  <span className="font-bold text-slate-300 block mb-1">Tasks Completed:</span>
-                                  <p className="text-slate-300 whitespace-pre-line">{log.tasks_completed || log.description}</p>
-                                </div>
-                                <div className="p-3 bg-background rounded-lg border border-surface-border">
-                                  <span className="font-bold text-emerald-400 block mb-1">Learnings:</span>
-                                  <p className="text-slate-300 whitespace-pre-line">{log.learnings || 'Applied engineering deliverables.'}</p>
-                                </div>
-                                <div className="p-3 bg-background rounded-lg border border-surface-border">
-                                  <span className="font-bold text-amber-400 block mb-1">Blockers:</span>
-                                  <p className="text-slate-300 whitespace-pre-line">{log.blockers || 'None.'}</p>
-                                </div>
-                              </div>
-
-                              {/* Evidence Items */}
-                              {log.evidence && log.evidence.length > 0 && (
-                                <div className="space-y-1.5 pt-1">
-                                  <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider block">
-                                    Submitted Evidence ({log.evidence.length})
-                                  </span>
-                                  <div className="flex flex-wrap gap-2">
-                                    {log.evidence.map((ev) => (
-                                      <a
-                                        key={ev.id}
-                                        href={ev.url || ev.file_url || '#'}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                        className="px-3 py-1.5 bg-background hover:bg-slate-800 text-slate-200 rounded-lg border border-surface-border flex items-center gap-2 transition-colors"
-                                      >
-                                        {ev.evidence_type === 'github' ? (
-                                          <Code2 className="w-3.5 h-3.5 text-slate-300" />
-                                        ) : ev.evidence_type === 'demo' ? (
-                                          <Globe className="w-3.5 h-3.5 text-emerald-400" />
-                                        ) : (
-                                          <FileText className="w-3.5 h-3.5 text-indigo-400" />
-                                        )}
-                                        <span className="font-medium text-xs truncate max-w-[200px]">
-                                          {ev.title || ev.file_name || 'Evidence Attachment'}
-                                        </span>
-                                        <ExternalLink className="w-3 h-3 text-slate-500" />
-                                      </a>
-                                    ))}
-                                  </div>
-                                </div>
-                              )}
                             </div>
                           )}
                         </Card>
                       );
-                    })}
-                  </div>
-                )}
-              </div>
+                    })
+                  )}
+                </div>
+              )}
+
+              {/* TAB 3: ATTENDANCE MANAGEMENT (OPTIONAL) */}
+              {activeTab === 'attendance' && (
+                <div className="space-y-6">
+                  {/* Mark Attendance Form */}
+                  <Card className="p-6 bg-surface border-surface-border space-y-4">
+                    <div>
+                      <h4 className="text-sm font-bold text-white">Record Attendance for {selectedIntern.student_name}</h4>
+                      <p className="text-xs text-slate-400 mt-0.5">
+                        Attendance is optional. Mark daily presence to maintain institutional records.
+                      </p>
+                    </div>
+
+                    <form onSubmit={handleRecordAttendance} className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-300 mb-1">Date</label>
+                        <input
+                          type="date"
+                          value={attendanceDate}
+                          onChange={(e) => setAttendanceDate(e.target.value)}
+                          className="w-full px-3 py-2 bg-background border border-surface-border rounded-lg text-xs text-white focus:outline-none"
+                          required
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-300 mb-1">Presence Status</label>
+                        <select
+                          value={attendanceStatus}
+                          onChange={(e) => setAttendanceStatus(e.target.value as any)}
+                          className="w-full px-3 py-2 bg-background border border-surface-border rounded-lg text-xs text-white focus:outline-none"
+                        >
+                          <option value="present">● Present</option>
+                          <option value="absent">✕ Absent</option>
+                          <option value="half_day">◐ Half Day</option>
+                          <option value="leave">● Approved Leave</option>
+                        </select>
+                      </div>
+
+                      <Button
+                        type="submit"
+                        variant="primary"
+                        size="md"
+                        loading={savingAttendance}
+                        icon={<Check className="w-4 h-4 text-black" />}
+                      >
+                        Save Presence
+                      </Button>
+                    </form>
+                  </Card>
+
+                  {/* Attendance Log History */}
+                  {attendanceRecords.length === 0 ? (
+                    <Card className="p-8 text-center border-dashed">
+                      <p className="text-xs text-slate-400">No attendance records logged for this intern yet.</p>
+                    </Card>
+                  ) : (
+                    <div className="space-y-2">
+                      <span className="text-xs font-bold uppercase text-slate-400 block">
+                        Logged Attendance History ({attendanceStats?.attendance_rate_percent}% Attendance Rate)
+                      </span>
+                      {attendanceRecords.map((rec) => (
+                        <div key={rec.id} className="p-3 bg-surface rounded-xl border border-surface-border flex justify-between items-center text-xs">
+                          <span className="font-semibold text-white">
+                            {new Date(rec.date).toLocaleDateString('en-US', {
+                              weekday: 'short',
+                              month: 'short',
+                              day: 'numeric',
+                              year: 'numeric',
+                            })}
+                          </span>
+                          <Badge variant={rec.status === 'present' ? 'success' : rec.status === 'absent' ? 'danger' : 'warning'}>
+                            ● {rec.status.toUpperCase()}
+                          </Badge>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>
-      ) : null}
+      )}
+
+      {/* CREATE COMPANY TASK MODAL */}
+      {showCreateTaskModal && selectedIntern && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto antialiased">
+          <div className="bg-surface border border-surface-border rounded-2xl max-w-lg w-full p-6 space-y-5 shadow-2xl">
+            <div className="flex justify-between items-center border-b border-surface-border pb-3">
+              <div>
+                <h3 className="text-lg font-bold text-white">+ Assign Company Task</h3>
+                <p className="text-xs text-slate-400 mt-0.5">Assigning to {selectedIntern.student_name}</p>
+              </div>
+              <button type="button" onClick={() => setShowCreateTaskModal(false)} className="text-slate-400 hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateCompanyTask} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">Task Title *</label>
+                <input
+                  type="text"
+                  value={newTaskTitle}
+                  onChange={(e) => setNewTaskTitle(e.target.value)}
+                  placeholder="e.g. Build Payment Gateway Webhook Integration"
+                  className="w-full px-3 py-2 bg-background border border-surface-border rounded-lg text-xs text-white focus:outline-none"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">Description *</label>
+                <textarea
+                  rows={3}
+                  value={newTaskDescription}
+                  onChange={(e) => setNewTaskDescription(e.target.value)}
+                  placeholder="Describe deliverables and requirements..."
+                  className="w-full px-3 py-2 bg-background border border-surface-border rounded-lg text-xs text-white focus:outline-none"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">Deadline *</label>
+                  <input
+                    type="date"
+                    value={newTaskDeadline}
+                    onChange={(e) => setNewTaskDeadline(e.target.value)}
+                    className="w-full px-3 py-2 bg-background border border-surface-border rounded-lg text-xs text-white focus:outline-none"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">Priority</label>
+                  <select
+                    value={newTaskPriority}
+                    onChange={(e) => setNewTaskPriority(e.target.value as any)}
+                    className="w-full px-3 py-2 bg-background border border-surface-border rounded-lg text-xs text-white focus:outline-none"
+                  >
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">Required Deliverable</label>
+                <select
+                  value={newTaskSubmissionType}
+                  onChange={(e) => setNewTaskSubmissionType(e.target.value as any)}
+                  className="w-full px-3 py-2 bg-background border border-surface-border rounded-lg text-xs text-white focus:outline-none"
+                >
+                  <option value="multiple">Multiple (File/Git/Demo)</option>
+                  <option value="github">GitHub Link</option>
+                  <option value="file">File Upload / PDF</option>
+                  <option value="text">Written Text Response</option>
+                  <option value="url">Demo URL</option>
+                </select>
+              </div>
+
+              <div className="flex justify-end gap-3 pt-3 border-t border-surface-border">
+                <Button type="button" variant="outline" size="md" onClick={() => setShowCreateTaskModal(false)}>
+                  Cancel
+                </Button>
+                <Button type="submit" variant="primary" size="md" loading={assigningTask} icon={<Send className="w-4 h-4 text-black" />}>
+                  Assign Task
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

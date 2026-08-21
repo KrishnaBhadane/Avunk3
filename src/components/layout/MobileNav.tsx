@@ -26,7 +26,7 @@ export const MobileNav: React.FC = () => {
 
   const tpLinks = [
     { to: '/tp', label: 'Home', icon: LayoutDashboard },
-    { to: '/tp/internship-monitor', label: 'Internships', icon: Clock },
+    { to: '/tp/internship-monitor', label: 'Tracker', icon: Clock },
     { to: '/tp/students', label: 'Students', icon: Users },
     { to: '/tp/insights', label: 'Analytics', icon: TrendingUp },
     { to: '/tp/profile', label: 'Profile', icon: User },
@@ -35,7 +35,7 @@ export const MobileNav: React.FC = () => {
   const companyLinks = [
     { to: '/company', label: 'Home', icon: LayoutDashboard },
     { to: '/company/applicants', label: 'Applicants', icon: Users },
-    { to: '/company/intern-tracker', label: 'Interns', icon: Clock },
+    { to: '/company/intern-tracker', label: 'Tracker', icon: Clock },
     { to: '/company/requirements', label: 'Postings', icon: Briefcase },
     { to: '/company/profile', label: 'Profile', icon: User },
   ];

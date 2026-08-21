@@ -19,6 +19,15 @@ import type {
   InternshipProgressStats,
   DailyLogStatus,
   EvidenceType,
+  InternshipTask,
+  TaskSubmission,
+  TaskStatus,
+  TaskPriority,
+  TaskSubmissionType,
+  InternshipAttendanceRecord,
+  AttendanceStatus,
+  StudentTaskProgressStats,
+  AttendanceSummaryStats,
 } from '../types';
 
 // ============================================================
@@ -773,5 +782,545 @@ export function calculateProgressStats(
     total_hours_worked: totalHoursWorked,
     evidence_submitted_count: evidenceCount,
     activity_consistency_percent: consistency,
+  };
+}
+
+// ============================================================
+// TASK MANAGEMENT (College / T&P & Company Assigned Tasks)
+// ============================================================
+
+/**
+ * Create an internship task assigned to an individual student, multiple students, or a company batch
+ */
+export async function createInternshipTask(payload: {
+  student_ids: string[];
+  internship_id?: string;
+  company_id?: string;
+  college_id?: string;
+  created_by?: string;
+  created_by_role: 'tp' | 'company';
+  task_source?: string;
+  title: string;
+  description: string;
+  instructions?: string;
+  deadline: string;
+  priority: TaskPriority;
+  submission_required: boolean;
+  submission_type: TaskSubmissionType;
+}): Promise<{ success: boolean; count?: number; error?: string }> {
+  try {
+    if (!payload.student_ids || payload.student_ids.length === 0) {
+      return { success: false, error: 'At least one student must be selected to assign this task.' };
+    }
+
+    const defaultSource = payload.created_by_role === 'tp' ? 'College / T&P' : 'Company';
+    const sourceLabel = payload.task_source || defaultSource;
+
+    const rows = payload.student_ids.map((sId) => ({
+      student_id: sId,
+      internship_id: payload.internship_id || null,
+      company_id: payload.company_id || null,
+      college_id: payload.college_id || null,
+      created_by: payload.created_by || null,
+      created_by_role: payload.created_by_role,
+      task_source: sourceLabel,
+      title: payload.title.trim(),
+      description: payload.description.trim(),
+      instructions: payload.instructions?.trim() || null,
+      deadline: payload.deadline,
+      priority: payload.priority || 'medium',
+      submission_required: payload.submission_required,
+      submission_type: payload.submission_type || 'multiple',
+      status: 'not_started',
+    }));
+
+    const { data, error } = await supabase.from('internship_tasks').insert(rows).select();
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    return { success: true, count: data?.length || rows.length };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to create task' };
+  }
+}
+
+/**
+ * Fetch all tasks assigned to a student (with submissions and auto-calculated overdue status)
+ */
+export async function fetchStudentTasks(studentProfileId: string): Promise<InternshipTask[]> {
+  try {
+    const { data: tasks, error } = await supabase
+      .from('internship_tasks')
+      .select('*')
+      .eq('student_id', studentProfileId)
+      .order('deadline', { ascending: true });
+
+    if (error || !tasks) {
+      console.warn('Error fetching student tasks:', error?.message);
+      return [];
+    }
+
+    const taskIds = tasks.map((t: any) => t.id);
+    let submissionsMap = new Map<string, TaskSubmission[]>();
+
+    if (taskIds.length > 0) {
+      const { data: subs } = await supabase
+        .from('task_submissions')
+        .select('*')
+        .in('task_id', taskIds)
+        .order('submitted_at', { ascending: false });
+
+      if (subs) {
+        subs.forEach((sub: any) => {
+          const list = submissionsMap.get(sub.task_id) || [];
+          submissionsMap.set(sub.task_id, [...list, sub as TaskSubmission]);
+        });
+      }
+    }
+
+    const todayStr = new Date().toISOString().split('T')[0];
+
+    return tasks.map((t: any) => {
+      const subs = submissionsMap.get(t.id) || [];
+      let calculatedStatus: TaskStatus = t.status as TaskStatus;
+
+      // Auto-detect overdue if past deadline and not completed/submitted/under_review
+      if (
+        t.deadline &&
+        t.deadline < todayStr &&
+        !['completed', 'submitted', 'under_review'].includes(t.status)
+      ) {
+        calculatedStatus = 'overdue';
+      }
+
+      return {
+        ...t,
+        status: calculatedStatus,
+        submissions: subs,
+      } as InternshipTask;
+    });
+  } catch (err) {
+    console.error('Exception in fetchStudentTasks:', err);
+    return [];
+  }
+}
+
+/**
+ * Fetch all tasks for an institution (for College / T&P oversight)
+ */
+export async function fetchAllTasksForTP(): Promise<InternshipTask[]> {
+  try {
+    const { data: tasks, error } = await supabase
+      .from('internship_tasks')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error || !tasks) return [];
+
+    const studentIds = [...new Set(tasks.map((t: any) => t.student_id))];
+    const companyIds = [...new Set(tasks.map((t: any) => t.company_id).filter(Boolean))];
+    const taskIds = tasks.map((t: any) => t.id);
+
+    // Fetch students
+    const { data: students } = await supabase
+      .from('student_profiles')
+      .select('id, full_name')
+      .in('id', studentIds);
+
+    const studentMap = new Map<string, string>();
+    (students || []).forEach((s: any) => studentMap.set(s.id, s.full_name));
+
+    // Fetch companies
+    const companyMap = new Map<string, string>();
+    if (companyIds.length > 0) {
+      const { data: companies } = await supabase
+        .from('company_profiles')
+        .select('id, company_name')
+        .in('id', companyIds);
+
+      (companies || []).forEach((c: any) => companyMap.set(c.id, c.company_name));
+    }
+
+    // Fetch submissions
+    const { data: subs } = await supabase
+      .from('task_submissions')
+      .select('*')
+      .in('task_id', taskIds)
+      .order('submitted_at', { ascending: false });
+
+    const submissionsMap = new Map<string, TaskSubmission[]>();
+    (subs || []).forEach((sub: any) => {
+      const list = submissionsMap.get(sub.task_id) || [];
+      submissionsMap.set(sub.task_id, [...list, sub as TaskSubmission]);
+    });
+
+    const todayStr = new Date().toISOString().split('T')[0];
+
+    return tasks.map((t: any) => {
+      const subs = submissionsMap.get(t.id) || [];
+      let calculatedStatus: TaskStatus = t.status as TaskStatus;
+
+      if (
+        t.deadline &&
+        t.deadline < todayStr &&
+        !['completed', 'submitted', 'under_review'].includes(t.status)
+      ) {
+        calculatedStatus = 'overdue';
+      }
+
+      return {
+        ...t,
+        status: calculatedStatus,
+        submissions: subs,
+        student_name: studentMap.get(t.student_id) || 'Student',
+        company_name: t.company_id ? companyMap.get(t.company_id) || 'Corporate Partner' : 'Not Linked',
+      } as InternshipTask;
+    });
+  } catch (err) {
+    console.error('Exception in fetchAllTasksForTP:', err);
+    return [];
+  }
+}
+
+/**
+ * Fetch all tasks associated with a company's interns
+ */
+export async function fetchTasksForCompany(companyProfileId: string): Promise<InternshipTask[]> {
+  try {
+    // 1. Find all student IDs assigned to this company
+    const { data: interns } = await supabase
+      .from('student_internships')
+      .select('id, student_id')
+      .eq('company_id', companyProfileId);
+
+    const studentIds = (interns || []).map((i: any) => i.student_id);
+
+    if (studentIds.length === 0) {
+      // Check tasks created directly by company
+      const { data: directTasks } = await supabase
+        .from('internship_tasks')
+        .select('*')
+        .eq('company_id', companyProfileId);
+
+      return (directTasks || []) as InternshipTask[];
+    }
+
+    const { data: tasks, error } = await supabase
+      .from('internship_tasks')
+      .select('*')
+      .in('student_id', studentIds)
+      .order('created_at', { ascending: false });
+
+    if (error || !tasks) return [];
+
+    const taskIds = tasks.map((t: any) => t.id);
+
+    // Fetch students
+    const { data: students } = await supabase
+      .from('student_profiles')
+      .select('id, full_name')
+      .in('id', studentIds);
+
+    const studentMap = new Map<string, string>();
+    (students || []).forEach((s: any) => studentMap.set(s.id, s.full_name));
+
+    // Fetch submissions
+    const { data: subs } = await supabase
+      .from('task_submissions')
+      .select('*')
+      .in('task_id', taskIds)
+      .order('submitted_at', { ascending: false });
+
+    const submissionsMap = new Map<string, TaskSubmission[]>();
+    (subs || []).forEach((sub: any) => {
+      const list = submissionsMap.get(sub.task_id) || [];
+      submissionsMap.set(sub.task_id, [...list, sub as TaskSubmission]);
+    });
+
+    const todayStr = new Date().toISOString().split('T')[0];
+
+    return tasks.map((t: any) => {
+      const subs = submissionsMap.get(t.id) || [];
+      let calculatedStatus: TaskStatus = t.status as TaskStatus;
+
+      if (
+        t.deadline &&
+        t.deadline < todayStr &&
+        !['completed', 'submitted', 'under_review'].includes(t.status)
+      ) {
+        calculatedStatus = 'overdue';
+      }
+
+      return {
+        ...t,
+        status: calculatedStatus,
+        submissions: subs,
+        student_name: studentMap.get(t.student_id) || 'Intern Candidate',
+      } as InternshipTask;
+    });
+  } catch (err) {
+    console.error('Exception in fetchTasksForCompany:', err);
+    return [];
+  }
+}
+
+/**
+ * Submit task work/evidence by student
+ */
+export async function submitTaskDeliverable(payload: {
+  task_id: string;
+  student_id: string;
+  submission_text?: string;
+  file_url?: string;
+  file_name?: string;
+  github_url?: string;
+  demo_url?: string;
+}): Promise<{ success: boolean; error?: string }> {
+  try {
+    // 1. Insert row into task_submissions
+    const { error: subError } = await supabase.from('task_submissions').insert({
+      task_id: payload.task_id,
+      student_id: payload.student_id,
+      submission_text: payload.submission_text?.trim() || null,
+      file_url: payload.file_url || null,
+      file_name: payload.file_name || null,
+      github_url: payload.github_url?.trim() || null,
+      demo_url: payload.demo_url?.trim() || null,
+      status: 'submitted',
+      submitted_at: new Date().toISOString(),
+    });
+
+    if (subError) {
+      return { success: false, error: subError.message };
+    }
+
+    // 2. Update task status to 'submitted'
+    const { error: taskError } = await supabase
+      .from('internship_tasks')
+      .update({
+        status: 'submitted',
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', payload.task_id);
+
+    if (taskError) {
+      return { success: false, error: taskError.message };
+    }
+
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to submit task deliverable' };
+  }
+}
+
+/**
+ * Review task submission (approved / changes requested / rejected)
+ */
+export async function reviewTaskSubmission(
+  taskId: string,
+  submissionId: string,
+  decision: 'completed' | 'changes_requested' | 'rejected',
+  comment: string,
+  reviewerId?: string,
+  reviewerName?: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    // 1. Update submission record
+    const { error: subError } = await supabase
+      .from('task_submissions')
+      .update({
+        status: decision,
+        review_comment: comment.trim(),
+        reviewed_at: new Date().toISOString(),
+        reviewed_by: reviewerId || null,
+        reviewer_name: reviewerName || 'Authorized Evaluator',
+      })
+      .eq('id', submissionId);
+
+    if (subError) {
+      return { success: false, error: subError.message };
+    }
+
+    // 2. Update parent task status
+    const { error: taskError } = await supabase
+      .from('internship_tasks')
+      .update({
+        status: decision,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', taskId);
+
+    if (taskError) {
+      return { success: false, error: taskError.message };
+    }
+
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to review submission' };
+  }
+}
+
+/**
+ * Calculate accurate task progress statistics for a student or batch
+ */
+export function calculateTaskProgress(tasks: InternshipTask[]): StudentTaskProgressStats {
+  const total = tasks.length;
+  if (total === 0) {
+    return {
+      total_tasks: 0,
+      completed_tasks: 0,
+      pending_tasks: 0,
+      overdue_tasks: 0,
+      under_review_tasks: 0,
+      changes_requested_tasks: 0,
+      progress_percent: 0,
+      has_tasks: false,
+    };
+  }
+
+  const completed = tasks.filter((t) => t.status === 'completed').length;
+  const overdue = tasks.filter((t) => t.status === 'overdue').length;
+  const underReview = tasks.filter((t) => ['submitted', 'under_review'].includes(t.status)).length;
+  const changesReq = tasks.filter((t) => t.status === 'changes_requested').length;
+  const pending = tasks.filter((t) => ['not_started', 'in_progress', 'changes_requested'].includes(t.status)).length;
+
+  const progressPercent = Math.min(100, Math.round((completed / total) * 100));
+
+  return {
+    total_tasks: total,
+    completed_tasks: completed,
+    pending_tasks: pending,
+    overdue_tasks: overdue,
+    under_review_tasks: underReview,
+    changes_requested_tasks: changesReq,
+    progress_percent: progressPercent,
+    has_tasks: true,
+  };
+}
+
+// ============================================================
+// ATTENDANCE / PRESENCE MANAGEMENT (OPTIONAL)
+// ============================================================
+
+/**
+ * Mark or update student attendance for a date (by Company)
+ */
+export async function markStudentAttendance(payload: {
+  internship_id: string;
+  student_id: string;
+  company_id: string;
+  date: string;
+  status: AttendanceStatus;
+  marked_by?: string;
+}): Promise<{ success: boolean; error?: string }> {
+  try {
+    const { error } = await supabase
+      .from('internship_attendance')
+      .upsert(
+        {
+          internship_id: payload.internship_id,
+          student_id: payload.student_id,
+          company_id: payload.company_id,
+          date: payload.date,
+          status: payload.status,
+          marked_by: payload.marked_by || null,
+        },
+        { onConflict: 'internship_id,date' }
+      );
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to record attendance' };
+  }
+}
+
+/**
+ * Fetch attendance records for a student
+ */
+export async function fetchStudentAttendance(
+  studentProfileId: string
+): Promise<InternshipAttendanceRecord[]> {
+  try {
+    const { data, error } = await supabase
+      .from('internship_attendance')
+      .select('*')
+      .eq('student_id', studentProfileId)
+      .order('date', { ascending: false });
+
+    if (error || !data) return [];
+    return data as InternshipAttendanceRecord[];
+  } catch (err) {
+    console.error('Exception in fetchStudentAttendance:', err);
+    return [];
+  }
+}
+
+/**
+ * Fetch attendance records for a company's interns
+ */
+export async function fetchCompanyAttendance(
+  companyProfileId: string,
+  date?: string
+): Promise<InternshipAttendanceRecord[]> {
+  try {
+    let query = supabase
+      .from('internship_attendance')
+      .select('*')
+      .eq('company_id', companyProfileId)
+      .order('date', { ascending: false });
+
+    if (date) {
+      query = query.eq('date', date);
+    }
+
+    const { data, error } = await query;
+    if (error || !data) return [];
+    return data as InternshipAttendanceRecord[];
+  } catch (err) {
+    console.error('Exception in fetchCompanyAttendance:', err);
+    return [];
+  }
+}
+
+/**
+ * Calculate attendance metrics
+ */
+export function calculateAttendanceStats(
+  records: InternshipAttendanceRecord[]
+): AttendanceSummaryStats {
+  if (!records || records.length === 0) {
+    return {
+      enabled: false,
+      present_days: 0,
+      absent_days: 0,
+      half_days: 0,
+      leave_days: 0,
+      total_marked_days: 0,
+      attendance_rate_percent: 0,
+    };
+  }
+
+  const present = records.filter((r) => r.status === 'present').length;
+  const absent = records.filter((r) => r.status === 'absent').length;
+  const half = records.filter((r) => r.status === 'half_day').length;
+  const leave = records.filter((r) => r.status === 'leave').length;
+  const total = records.length;
+
+  const rate = total > 0 ? Math.round(((present + half * 0.5) / total) * 100) : 0;
+
+  return {
+    enabled: true,
+    present_days: present,
+    absent_days: absent,
+    half_days: half,
+    leave_days: leave,
+    total_marked_days: total,
+    attendance_rate_percent: rate,
   };
 }
