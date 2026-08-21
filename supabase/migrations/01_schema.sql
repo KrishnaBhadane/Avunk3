@@ -714,10 +714,9 @@ create policy "tp_profiles_update_own" on tp_profiles
 
 -- --- COMPANY PROFILES ---
 drop policy if exists "company_profiles_select_own" on company_profiles;
-create policy "company_profiles_select_own" on company_profiles
-  for select using (
-    exists (select 1 from profiles where profiles.id = company_profiles.profile_id and profiles.auth_user_id = auth.uid())
-  );
+drop policy if exists "company_profiles_select_all" on company_profiles;
+create policy "company_profiles_select_all" on company_profiles
+  for select using (auth.role() = 'authenticated');
 
 drop policy if exists "company_profiles_insert_own" on company_profiles;
 create policy "company_profiles_insert_own" on company_profiles

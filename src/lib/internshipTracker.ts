@@ -93,22 +93,37 @@ export async function createStudentInternship(
     start_date: string;
     end_date: string;
     total_days: number;
-    company_id: string; // REQUIRED — must be a registered AVUNK company
+    company_id?: string | null;
     mentor_name?: string;
     mentor_email?: string;
   }
 ): Promise<{ success: boolean; data?: StudentInternship; error?: string }> {
   try {
+    let resolvedCompanyId = payload.company_id || null;
+
+    // If company_id not provided, try to find matching company_profiles by name
+    if (!resolvedCompanyId && payload.company_name) {
+      const { data: matchedComp } = await supabase
+        .from('company_profiles')
+        .select('id')
+        .ilike('company_name', payload.company_name.trim())
+        .maybeSingle();
+
+      if (matchedComp) {
+        resolvedCompanyId = matchedComp.id;
+      }
+    }
+
     const { data, error } = await supabase
       .from('student_internships')
       .insert({
         student_id: studentProfileId,
-        company_name: payload.company_name,
-        role: payload.role,
+        company_name: payload.company_name.trim(),
+        role: payload.role.trim(),
         start_date: payload.start_date,
         end_date: payload.end_date,
         total_days: payload.total_days || 30,
-        company_id: payload.company_id,
+        company_id: resolvedCompanyId,
         mentor_name: payload.mentor_name || null,
         mentor_email: payload.mentor_email || null,
         status: 'pending_verification',

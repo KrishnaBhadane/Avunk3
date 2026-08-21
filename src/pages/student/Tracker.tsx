@@ -56,6 +56,8 @@ export const StudentTracker: React.FC = () => {
   // Registered Companies for dropdown
   const [registeredCompanies, setRegisteredCompanies] = useState<RegisteredCompany[]>([]);
   const [companySearchTerm, setCompanySearchTerm] = useState('');
+  const [loadingCompanies, setLoadingCompanies] = useState(false);
+  const [companyInputMode, setCompanyInputMode] = useState<'registered' | 'custom'>('registered');
 
   // Modals
   const [showAddInternshipModal, setShowAddInternshipModal] = useState(false);
@@ -146,10 +148,20 @@ export const StudentTracker: React.FC = () => {
     setNewTotalDays(30);
     setNewMentorName('');
     setNewMentorEmail('');
+    setLoadingCompanies(true);
 
-    if (registeredCompanies.length === 0) {
+    try {
       const companies = await fetchRegisteredCompanies();
       setRegisteredCompanies(companies);
+      if (companies.length === 0) {
+        setCompanyInputMode('custom');
+      } else {
+        setCompanyInputMode('registered');
+      }
+    } catch {
+      setCompanyInputMode('custom');
+    } finally {
+      setLoadingCompanies(false);
     }
   };
 
@@ -158,8 +170,8 @@ export const StudentTracker: React.FC = () => {
     e.preventDefault();
     if (!studentProfile) return;
 
-    if (!selectedCompanyId || !selectedCompanyName) {
-      setFormError('You must select a company registered on AVUNK. The company must have an active account.');
+    if (!selectedCompanyName.trim()) {
+      setFormError('Please choose or enter your company name.');
       return;
     }
     if (!newRole.trim()) {
@@ -171,12 +183,12 @@ export const StudentTracker: React.FC = () => {
     setFormError('');
 
     const res = await createStudentInternship(studentProfile.id, {
-      company_name: selectedCompanyName,
+      company_name: selectedCompanyName.trim(),
       role: newRole.trim(),
       start_date: newStartDate,
       end_date: newEndDate,
       total_days: Number(newTotalDays) || 30,
-      company_id: selectedCompanyId,
+      company_id: selectedCompanyId || null,
       mentor_name: newMentorName.trim() || undefined,
       mentor_email: newMentorEmail.trim() || undefined,
     });
@@ -189,7 +201,7 @@ export const StudentTracker: React.FC = () => {
 
     setShowAddInternshipModal(false);
     setSubmittingInternship(false);
-    setSuccessNotice('Internship request sent to company for verification. Tracker will activate once the company confirms your internship.');
+    setSuccessNotice('Internship request sent for verification! Tracker will activate once the company confirms your internship.');
     setTimeout(() => setSuccessNotice(''), 8000);
 
     await loadData();
@@ -991,66 +1003,127 @@ export const StudentTracker: React.FC = () => {
             )}
 
             <form onSubmit={handleCreateInternship} className="space-y-4">
-              {/* Company Selection from AVUNK Database */}
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">
-                  Select Company (Registered on AVUNK) *
-                </label>
-
-                {/* Search Filter */}
-                <div className="relative mb-2">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500" />
-                  <input
-                    type="text"
-                    value={companySearchTerm}
-                    onChange={(e) => setCompanySearchTerm(e.target.value)}
-                    placeholder="Search companies..."
-                    className="w-full pl-9 pr-3 py-2 bg-background border border-surface-border rounded-lg text-xs text-white focus:outline-none focus:border-slate-400"
-                  />
+              {/* Company Selection Mode Toggle */}
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <label className="block text-xs font-semibold text-slate-300">
+                    Company / Organization *
+                  </label>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setCompanyInputMode('registered')}
+                      className={`text-[10px] font-bold px-2 py-0.5 rounded transition-all ${
+                        companyInputMode === 'registered'
+                          ? 'bg-white text-black'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      Choose Directory ({registeredCompanies.length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCompanyInputMode('custom');
+                        setSelectedCompanyId('');
+                      }}
+                      className={`text-[10px] font-bold px-2 py-0.5 rounded transition-all ${
+                        companyInputMode === 'custom'
+                          ? 'bg-white text-black'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      Enter Directly
+                    </button>
+                  </div>
                 </div>
 
-                {/* Company List */}
-                <div className="max-h-40 overflow-y-auto border border-surface-border rounded-xl bg-background">
-                  {filteredCompanies.length === 0 ? (
-                    <div className="p-4 text-center text-xs text-slate-500">
-                      {registeredCompanies.length === 0
-                        ? 'Loading registered companies...'
-                        : 'No companies found matching your search. The company must be registered on AVUNK.'}
+                {companyInputMode === 'registered' ? (
+                  <div className="space-y-2">
+                    {/* Search Filter */}
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500" />
+                      <input
+                        type="text"
+                        value={companySearchTerm}
+                        onChange={(e) => setCompanySearchTerm(e.target.value)}
+                        placeholder="Search company name or industry..."
+                        className="w-full pl-9 pr-3 py-2 bg-background border border-surface-border rounded-lg text-xs text-white focus:outline-none focus:border-slate-400"
+                      />
                     </div>
-                  ) : (
-                    filteredCompanies.map((company) => (
-                      <button
-                        key={company.id}
-                        type="button"
-                        onClick={() => {
-                          setSelectedCompanyId(company.id);
-                          setSelectedCompanyName(company.company_name);
-                        }}
-                        className={`w-full flex items-center gap-3 px-4 py-2.5 text-left border-b border-surface-border/50 last:border-0 transition-colors ${
-                          selectedCompanyId === company.id
-                            ? 'bg-emerald-950/40 text-emerald-300'
-                            : 'hover:bg-surface-hover text-white'
-                        }`}
-                      >
-                        <Building2 className={`w-4 h-4 shrink-0 ${selectedCompanyId === company.id ? 'text-emerald-400' : 'text-slate-500'}`} />
-                        <div className="min-w-0">
-                          <span className="text-xs font-semibold block truncate">{company.company_name}</span>
-                          {company.industry && (
-                            <span className="text-[10px] text-slate-500 block truncate">{company.industry}</span>
-                          )}
-                        </div>
-                        {selectedCompanyId === company.id && (
-                          <Check className="w-4 h-4 text-emerald-400 ml-auto shrink-0" />
-                        )}
-                      </button>
-                    ))
-                  )}
-                </div>
 
-                {selectedCompanyName && (
-                  <div className="mt-2 text-xs text-emerald-400 flex items-center gap-1.5">
-                    <CheckCircle2 className="w-3.5 h-3.5" />
-                    Selected: <strong>{selectedCompanyName}</strong>
+                    {/* Company List */}
+                    <div className="max-h-40 overflow-y-auto border border-surface-border rounded-xl bg-background divide-y divide-surface-border/40">
+                      {loadingCompanies ? (
+                        <div className="p-4 text-center text-xs text-slate-400 flex items-center justify-center gap-2">
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          <span>Loading companies from AVUNK database...</span>
+                        </div>
+                      ) : filteredCompanies.length === 0 ? (
+                        <div className="p-4 text-center space-y-1.5">
+                          <p className="text-xs text-slate-400">
+                            {registeredCompanies.length === 0
+                              ? 'No companies registered yet.'
+                              : 'No matching company found in directory.'}
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => setCompanyInputMode('custom')}
+                            className="text-[11px] text-emerald-400 underline font-semibold"
+                          >
+                            Click here to type your company name directly
+                          </button>
+                        </div>
+                      ) : (
+                        filteredCompanies.map((company) => (
+                          <button
+                            key={company.id}
+                            type="button"
+                            onClick={() => {
+                              setSelectedCompanyId(company.id);
+                              setSelectedCompanyName(company.company_name);
+                            }}
+                            className={`w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors ${
+                              selectedCompanyId === company.id
+                                ? 'bg-emerald-950/40 text-emerald-300'
+                                : 'hover:bg-surface-hover text-white'
+                            }`}
+                          >
+                            <Building2 className={`w-4 h-4 shrink-0 ${selectedCompanyId === company.id ? 'text-emerald-400' : 'text-slate-500'}`} />
+                            <div className="min-w-0 flex-1">
+                              <span className="text-xs font-semibold block truncate">{company.company_name}</span>
+                              {company.industry && (
+                                <span className="text-[10px] text-slate-500 block truncate">{company.industry}</span>
+                              )}
+                            </div>
+                            {selectedCompanyId === company.id && (
+                              <Check className="w-4 h-4 text-emerald-400 ml-auto shrink-0" />
+                            )}
+                          </button>
+                        ))
+                      )}
+                    </div>
+
+                    {selectedCompanyName && (
+                      <div className="text-xs text-emerald-400 flex items-center gap-1.5 pt-1">
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        Selected Company: <strong>{selectedCompanyName}</strong>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div>
+                    <input
+                      type="text"
+                      value={selectedCompanyName}
+                      onChange={(e) => setSelectedCompanyName(e.target.value)}
+                      placeholder="e.g. Apex Systems Labs / Google / Microsoft"
+                      className="w-full px-3 py-2 bg-background border border-surface-border rounded-lg text-xs text-white focus:outline-none focus:border-slate-400"
+                      required
+                    />
+                    <p className="text-[10px] text-slate-500 mt-1">
+                      Your employer can log in or register on AVUNK to verify your internship and review daily work.
+                    </p>
                   </div>
                 )}
               </div>
